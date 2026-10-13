@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>화면 길잡이 — 사이드 패널 미리보기</title>
+<link rel="stylesheet" href="../shared/style.css">
+<style>
+  /* 브라우저에서 단독으로 열어볼 때만 쓰는 미리보기 틀 (확장 프로그램에는 사용되지 않음) */
+  html, body { height: 100%; }
+  body.chat { background: #cfd6e4; align-items: center; justify-content: flex-start; padding: 16px; gap: 10px; }
+  .sim { width: 400px; max-width: 100%; font-size: 12px; color: #333; }
+  .sim select { width: 100%; margin-top: 4px; padding: 6px; border-radius: 8px; border: 1px solid #aab; }
+  .frame { width: 400px; max-width: 100%; flex: 1; min-height: 0; display: flex; flex-direction: column;
+           background: var(--bg); border-radius: 14px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,.2); }
+</style>
+</head>
+<body class="panel chat">
+<div class="sim">
+  미리보기용: 현재 탭 URL 가정
+  <select id="fakeTab">
+    <option>http://localhost:8080/orders</option>
+    <option>https://order-test.company.example/login</option>
+    <option>http://localhost:3000/</option>
+    <option>https://order.company.example/admin</option>
+    <option>https://www.google.com/</option>
+  </select>
+</div>
+
+<div class="frame">
+  <header class="chat-head">
+    <h1><img class="logo" src="../icons/icon32.png" alt="">화면 길잡이</h1>
+    <div id="status" class="status none"></div>
+  </header>
+  <main id="feed" class="feed"></main>
+  <footer class="composer">
+    <div id="slashMenu" class="slash hidden"></div>
+    <div id="chips" class="chips"></div>
+    <form id="form" autocomplete="off">
+      <span class="prompt">/</span>
+      <input id="cmd" type="text" spellcheck="false" placeholder="이 화면에서 뭘 하고 싶으세요? (예: 쇼핑 접속하고 싶어)">
+      <button type="submit" class="send" title="실행">↵</button>
+    </form>
+  </footer>
+</div>
+<div id="toast" class="toast">복사됨</div>
+
+<script>
+  // chrome 확장 API 흉내 (탭 URL만 select 값으로 대체)
+  const sel = document.getElementById("fakeTab");
+  const SAMPLE_PAGE = {
+    url: "https://order-test.company.example/main", title: "주문 관리 시스템 - 대시보드",
+    headings: ["대시보드", "오늘의 주문 현황"],
+    nav: [{ id: 0, t: "대시보드", h: "/main" }, { id: 1, t: "주문 조회", h: "/orders/search" }, { id: 2, t: "주문 등록", h: "/orders/new" },
+          { id: 3, t: "고객 관리", h: "/customers" }, { id: 4, t: "통계", h: "/stats" }, { id: 5, t: "로그아웃", h: "/logout" }],
+    links: [], forms: [], buttons: [], tables: [["주문번호", "고객명", "금액", "상태"]], text: "대시보드 오늘의 주문 현황 신규 12건 처리중 5건 완료 40건",
+  };
+  window.chrome = {
+    tabs: { query: async () => [{ url: sel.value }], onActivated: { addListener() {} }, onUpdated: { addListener() {} } },
+    windows: { onFocusChanged: { addListener() {} } },
+    // 화면 읽기/하이라이트 흉내 (미리보기에서는 실제 표시는 되지 않고 호출만 확인)
+    scripting: { executeScript: async ({ func, args }) => [{ result:
+      func.name === "extractPage" ? SAMPLE_PAGE :
+      func.name === "highlightTargets" ? { shown: (args[0] || []).length } : { shown: 0 } }] },
+  };
+</script>
+<script src="../shared/sample-pack.js"></script>
+<script src="../shared/match.js"></script>
+<script src="../shared/core.js"></script>
+<script src="../shared/local-config.js"></script>
+<script src="../shared/gemini.js"></script>
+<script src="../shared/chat.js"></script>
+<script src="pagereader.js"></script>
+<script src="sidepanel.js"></script>
+<script>sel.addEventListener("change", () => EnvChat.setStatus(sel.value));</script>
+</body>
+</html>

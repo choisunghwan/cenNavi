@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>주문 관리 시스템 - 주문 조회</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top"><b>주문 관리 시스템</b><span class="env">DEV</span><span class="user">dev_admin 님</span></header>
+<div class="layout">
+  <aside class="sidebar">
+    <nav>
+      <a href="index.html">대시보드</a>
+      <a href="orders-search.html" class="on">주문 조회</a>
+      <a href="orders-new.html">주문 등록</a>
+      <a href="index.html#customers">고객 관리</a>
+      <a href="index.html#stats">통계</a>
+      <a href="index.html#logout">로그아웃</a>
+    </nav>
+  </aside>
+  <main>
+    <h1>주문 조회</h1>
+    <form action="orders-search.html" class="search">
+      <label>주문번호 <input type="text" name="orderNo" placeholder="예: A-1001"></label>
+      <label>고객명 <input type="text" name="customer" placeholder="고객명"></label>
+      <label>기간 <input type="date" name="from"> ~ <input type="date" name="to"></label>
+      <button type="submit">조회</button>
+      <button type="reset">초기화</button>
+    </form>
+    <table>
+      <thead><tr><th>주문번호</th><th>고객명</th><th>금액</th><th>상태</th></tr></thead>
+      <tbody><tr><td colspan="4" class="empty">조건을 입력하고 조회를 눌러 주세요.</td></tr></tbody>
+    </table>
+  </main>
+</div>
+</body>
+</html>

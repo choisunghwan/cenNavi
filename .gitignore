@@ -1,0 +1,15 @@
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/
+
+# 로컬 테스트용 API 키 파일: 공유·커밋·그래프 분석에서 제외
+/shared/local-config.js
+
+# 비밀·로컬 정보: 절대 커밋 금지
+.env
+.env.*
+*.key
+*.pem
+*API*키*
+local-config.js
+.claude/settings.local.json
+.codepilot/

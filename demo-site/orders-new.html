@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>주문 관리 시스템 - 주문 등록</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top"><b>주문 관리 시스템</b><span class="env">DEV</span><span class="user">dev_admin 님</span></header>
+<div class="layout">
+  <aside class="sidebar">
+    <nav>
+      <a href="index.html">대시보드</a>
+      <a href="orders-search.html">주문 조회</a>
+      <a href="orders-new.html" class="on">주문 등록</a>
+      <a href="index.html#customers">고객 관리</a>
+      <a href="index.html#stats">통계</a>
+      <a href="index.html#logout">로그아웃</a>
+    </nav>
+  </aside>
+  <main>
+    <h1>주문 등록</h1>
+    <form action="orders-new.html" class="search">
+      <label>고객명 <input type="text" name="customer" placeholder="고객명"></label>
+      <label>상품 <select name="item"><option>상품 A</option><option>상품 B</option></select></label>
+      <label>수량 <input type="number" name="qty" value="1"></label>
+      <button type="submit">등록</button>
+    </form>
+  </main>
+</div>
+</body>
+</html>

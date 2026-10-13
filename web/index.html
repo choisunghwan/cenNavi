@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>화면 길잡이 (Web)</title>
+<link rel="icon" href="../icons/icon32.png">
+<link rel="stylesheet" href="../shared/style.css">
+</head>
+<body class="chat web-chat">
+<div class="app">
+  <header class="chat-head">
+    <h1><img class="logo" src="../icons/icon48.png" alt="">화면 길잡이</h1>
+    <div id="status" class="status none"></div>
+  </header>
+
+  <main id="feed" class="feed"></main>
+
+  <footer class="composer">
+    <div id="slashMenu" class="slash hidden"></div>
+    <div id="chips" class="chips"></div>
+    <form id="form" autocomplete="off">
+      <span class="prompt">/</span>
+      <input id="cmd" type="text" spellcheck="false" placeholder="명령을 입력하세요 (예: /로그인 localhost:8080)">
+      <button type="submit" class="send" title="실행">↵</button>
+    </form>
+  </footer>
+</div>
+<div id="toast" class="toast">복사됨</div>
+
+<script src="../shared/sample-pack.js"></script>
+<script src="../shared/match.js"></script>
+<script src="../shared/core.js"></script>
+<script src="../shared/local-config.js"></script>
+<script src="../shared/gemini.js"></script>
+<script src="../shared/chat.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
