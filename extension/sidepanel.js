@@ -10,7 +10,7 @@ const getUrl = async () => {
 const getPage = async () => {
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   const [res] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: extractPage });
-  return res.result;
+  return { ...res.result, tabId: tab.id };
 };
 
 // 현재 탭의 보이는 영역을 캡처한다 (JPEG로 줄여서 전송량을 낮춘다)
@@ -75,26 +75,26 @@ const browserNav = async (action) => {
 };
 
 // 확인 후 실행: 사용자가 계획 카드에서 [실행]을 눌렀을 때만 호출된다
-const act = async (actions, url) => {
+const act = async (actions, url, context = {}) => {
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  if (!tab || tab.url !== url) throw new Error("화면이 바뀌었어요. 다시 요청해 주세요.");
+  if (!tab || tab.id !== context.tabId || tab.url !== url) throw new Error("화면이 바뀌었어요. 다시 요청해 주세요.");
   if (EnvMatch.lookup(tab.url).kind === "prod") throw new Error("운영 환경에서는 실행하지 않아요.");
 
   // 실행 도중 페이지가 이동하면 결과를 돌려받을 수 없으므로, 이동 이벤트와 시간 제한으로도 마무리한다
-  let onUpdated;
+  let onUpdated, timer;
   const moved = new Promise((resolve) => {
-    onUpdated = (id, info) => { if (id === tab.id && info.status === "loading") resolve([{ ok: true, note: "페이지가 이동했어요" }]); };
+    onUpdated = (id, info) => { if (id === tab.id && info.status === "loading") resolve([{ ok: false, note: "페이지가 이동했어요. 새 화면에서 결과를 확인해 주세요." }]); };
     chrome.tabs.onUpdated.addListener(onUpdated);
   });
-  const timeout = new Promise((resolve) => setTimeout(() => resolve([{ ok: true, note: "실행했어요" }]), 8000));
-  const run = chrome.scripting.executeScript({ target: { tabId: tab.id }, func: performActions, args: [actions] })
-    .then(([res]) => (res && res.result) || [{ ok: true, note: "페이지가 이동했어요" }])
+  const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve([{ ok: false, note: "시간이 초과되어 완료 여부를 확인하지 못했어요. 화면을 확인해 주세요." }]), 8000); });
+  const run = chrome.scripting.executeScript({ target: { tabId: tab.id }, func: performActions, args: [actions, context.snapshot] })
+    .then(([res]) => (res && res.result) || [{ ok: false, note: "페이지가 이동했어요. 새 화면에서 결과를 확인해 주세요." }])
     .catch((e) => {
-      if (/frame|removed|closed|navigat|context/i.test(e.message)) return [{ ok: true, note: "페이지가 이동했어요" }];   // 실행 도중 페이지가 바뀐 경우
+      if (/frame|removed|closed|navigat|context/i.test(e.message)) return [{ ok: false, note: "페이지가 이동했어요. 새 화면에서 결과를 확인해 주세요." }];   // 실행 도중 페이지가 바뀐 경우
       throw e;
     });
   try { return await Promise.race([run, moved, timeout]); }
-  finally { chrome.tabs.onUpdated.removeListener(onUpdated); }
+  finally { clearTimeout(timer); chrome.tabs.onUpdated.removeListener(onUpdated); }
 };
 
 EnvChat.mount({ getUrl, getPage, getShot, highlight, unhighlight, browserNav, act, diagnose });

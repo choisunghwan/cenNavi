@@ -216,3 +216,12 @@ ul.why { margin: 6px 0 6px 16px; padding: 0; }
 .lb.full .lb-body img { max-width: none; cursor: zoom-out; }
 .shot { transition: transform .15s; }
 .shot:hover { transform: scale(1.04); }
+
+/* Assistant workspace */
+.assistant-tools { display:flex; align-items:center; flex-wrap:wrap; gap:6px; padding:8px 12px; border-bottom:1px solid var(--line); background:var(--surface); }
+.assistant-tools .save-state { font-size:10px; color:var(--muted); margin-left:auto; }
+.assistant-tools [data-stop] { color:var(--warn); }
+[hidden] { display:none!important; }
+button:disabled { opacity:.5; cursor:not-allowed; }
+.bubble { overflow-wrap:anywhere; }
+.feed { min-height:0; }

@@ -5,6 +5,7 @@
 // 화면 구조를 읽는다. 눌러볼 만한 항목에는 id를 붙여 두고, 이후 highlightTargets가 그 id로 같은 요소를 찾는다.
 function extractPage() {
   window.__guideEls = [];
+  window.__guideSnapshot = crypto.randomUUID();
   const reg = (el) => window.__guideEls.push(el) - 1;
 
   const txt = (el) => (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim();
@@ -74,6 +75,9 @@ function extractPage() {
     fields: [...f.querySelectorAll("input,select,textarea,button")].filter(vis).slice(0, 25).map(fieldOf),
   }));
 
+  const loose = [...document.querySelectorAll('input,select,textarea,[contenteditable="true"],[role="textbox"]')].filter(el => !el.closest('form') && vis(el)).slice(0, 40);
+  if (loose.length) forms.push({ action: '', fields: loose.map(fieldOf) });
+
   // 폼 밖의 버튼
   const buttons = [...document.querySelectorAll("button, [role=button], input[type=button], input[type=submit]")]
     .filter((b) => vis(b) && !b.closest("form")).slice(0, 25)
@@ -85,6 +89,8 @@ function extractPage() {
     }));
 
   return {
+    snapshot: window.__guideSnapshot,
+    selection: String(window.getSelection() || "").slice(0, 12000),
     url: location.href,
     title: document.title,
     headings: [...document.querySelectorAll("h1,h2,h3")].filter(vis).slice(0, 30).map(txt).filter(Boolean),
@@ -94,8 +100,9 @@ function extractPage() {
     forms,
     buttons,
     tables: [...document.querySelectorAll("table")].filter(vis).slice(0, 5)
-      .map((t) => [...t.querySelectorAll("th")].slice(0, 15).map(txt).filter(Boolean)),
-    text: txt(document.body).slice(0, 4000),
+      .map((t) => ({ headers: [...t.querySelectorAll("th")].slice(0, 20).map(txt).filter(Boolean),
+        rows: [...t.querySelectorAll("tr")].slice(0, 30).map(row => [...row.querySelectorAll('td')].slice(0, 20).map(cell => txt(cell).slice(0, 200))).filter(row => row.length) })),
+    text: txt(document.querySelector("main,article,[role=main]") || document.body).slice(0, 24000),
   };
 }
 
@@ -197,7 +204,8 @@ function clearHighlight() {
 
 // 사용자가 확인한 계획을 실행한다. 허용 동작은 입력(type)·Enter(enter)·클릭(click)뿐이다.
 // (페이지 안에서 한 번 더 검증한다: 비밀번호 칸, 삭제·결제·전송 계열, 비밀번호가 있는 로그인 폼 제출은 막는다)
-function performActions(actions) {
+function performActions(actions, snapshot) {
+  if (!snapshot || snapshot !== window.__guideSnapshot) return Promise.resolve([{ ok:false, note:'화면 분석이 갱신됐어요. 다시 요청해 주세요.' }]);
   const DANGER = /삭제|제거|결제|구매|주문하기|송금|이체|전송|발송|탈퇴|해지|확정|승인|제출|초기화|로그아웃|delete|remove|pay|purchase|buy|send|submit|confirm|withdraw|logout|sign ?out/i;
   const TEXT_TYPES = ["text", "search", "email", "url", "tel", "number", ""];
   const els = window.__guideEls || [];
@@ -214,6 +222,7 @@ function performActions(actions) {
           const isInput = el.tagName === "INPUT" && TEXT_TYPES.includes((el.type || "").toLowerCase());
           const isArea = el.tagName === "TEXTAREA";
           if (!isInput && !isArea && !el.isContentEditable) { results.push({ ok: false, note: "입력할 수 없는 칸이에요" }); break; }
+          if (a.type === 'enter' && el.form && el.form.querySelector('input[type=password]')) { results.push({ok:false,note:'비밀번호가 있는 로그인은 직접 해 주세요'}); break; }
           el.focus();
           if (a.type === "type") {
             if (isInput || isArea) {
