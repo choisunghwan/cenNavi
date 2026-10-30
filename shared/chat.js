@@ -2,7 +2,7 @@
 (function () {
   const { $, esc, renderNow, renderList, resolveUrl, ENTRIES } = EnvCore;
 
-  function mount({ getUrl, getPage, getShot, highlight, unhighlight, browserNav, act, diagnose, manual = false }) {
+  function mount({ getUrl, getPage, getShot, highlight, unhighlight, browserNav, act, cancelAct, diagnose, manual = false }) {
     const feed = $("feed"), input = $("cmd"), menu = $("slashMenu"), form = $("form");
     const chips = document.createElement('div'); chips.id = 'chips'; chips.className = 'suggestions';
 
@@ -24,7 +24,7 @@
     utility.addEventListener('close', () => toggle.focus());
     const saveState = () => { tools.querySelector('.save-state').textContent = session.saved() ? '대화는 이 기기에 저장됩니다' : '기록 저장 공간이 부족해요'; };
     const remember = (role, text) => { session.append(role, text); saveState(); };
-    stopButton.onclick = () => controller?.abort();
+    stopButton.onclick = () => { controller?.abort(); if(actionBusy) cancelAct?.(); };
     toolbar.querySelector('[data-new]').onclick = () => { if (controller || actionBusy) return; session.clear(); plans.clear(); hlLabels.clear(); feed.replaceChildren(); greet(); saveState(); };
     function exportConversation() {
       const text = session.messages().map(x => `### ${x.role === 'user' ? '나' : 'CenNavi'}\n\n${x.text}`).join('\n\n');
@@ -34,9 +34,9 @@
 
     // 명령 정의: name(한글) + alias(영문 등), arg가 있으면 인자를 받는 명령
     const COMMANDS = [
-      { name: "요약", alias: ["summary"], icon: "✦", desc: "현재 페이지 핵심 요약", run: (box) => analyze(box, "이 페이지의 핵심 내용을 요약하고 주요 사실과 할 일을 정리해줘.") },
-      { name: "번역", alias: ["translate"], icon: "🌐", desc: "선택 영역 또는 페이지 한국어 번역", run: (box) => analyze(box, "선택한 내용이 있으면 선택 영역을, 없으면 페이지 본문을 한국어로 번역해줘.") },
-      { name: "선택", alias: ["selection"], icon: "⌁", arg: "[질문]", argOptional: true, desc: "페이지에서 선택한 글에 질문", run: (box, args) => analyze(box, args || "선택한 내용을 쉽게 설명해줘.", true) },
+      { name: "요약", alias: ["summary"], icon: "✦", desc: "현재 페이지 핵심 요약", run: (box) => analyze(box, "이 페이지의 핵심 내용을 요약하고 주요 사실과 할 일을 정리해줘.", false, {readOnly:true}) },
+      { name: "번역", alias: ["translate"], icon: "🌐", desc: "선택 영역 또는 페이지 한국어 번역", run: (box) => analyze(box, "선택한 내용이 있으면 선택 영역을, 없으면 페이지 본문을 한국어로 번역해줘.", false, {readOnly:true}) },
+      { name: "선택", alias: ["selection"], icon: "⌁", arg: "[질문]", argOptional: true, desc: "페이지에서 선택한 글에 질문", run: (box, args) => analyze(box, args || "선택한 내용을 쉽게 설명해줘.", true, {readOnly:true}) },
       { name: "로그인", alias: ["login"], icon: "🔑", arg: "[주소]", argOptional: true,
         desc: manual ? "주소(또는 키워드)로 로그인 계정 보기" : "현재 사이트의 로그인 계정 보기 · 주소 지정 가능",
         run: async (box, args) => {
@@ -100,43 +100,17 @@
     const NAV_LABEL = { back: "⬅ 이전 화면으로 이동", forward: "➡ 앞 화면으로 이동", reload: "🔄 새로고침" };
     const hlLabels = new Map();   // 다시 표시할 때 쓸 단계 설명 (ids → labels)
 
-    // Gemini가 번호를 주지 않았을 때: 답변의 **굵은 글씨**·'따옴표' 이름을 화면 항목과 맞춰 본다
     const norm = (t) => String(t || "").replace(/\s+/g, "").toLowerCase();
-    function guessTargets(answer, page) {
-      const items = [
-        // 입력칸을 가장 먼저 찾는다 ("검색창", "입력칸"을 말했는데 같은 이름의 다른 버튼이 잡히지 않도록)
-        ...page.forms.flatMap((f) => f.fields.filter((x) => /^(text|search|email|url|tel|number|textarea|password)$/.test(x.type)).map((x) => ({ id: x.id, t: x.label || x.name }))),
-        ...(page.buttons || []), ...page.nav, ...(page.links || []),
-        ...page.forms.flatMap((f) => f.fields.filter((x) => !/^(text|search|email|url|tel|number|textarea|password)$/.test(x.type)).map((x) => ({ id: x.id, t: x.label || x.name }))),
-      ].filter((x) => x.t);
-      const names = [...answer.matchAll(/\*\*(.+?)\*\*|['"“‘「]([^'"”’」]{2,24})['"”’」]/g)].map((m) => norm(m[1] || m[2])).filter((n) => n.length >= 2);
-      const ids = [];
-      for (const n of names) {
-        const hit = items.find((x) => norm(x.t) === n) || items.find((x) => norm(x.t).includes(n) || (norm(x.t).length >= 2 && n.includes(norm(x.t))));
-        if (hit && !ids.includes(hit.id)) ids.push(hit.id);
-      }
-      return ids.slice(0, 3);
-    }
-
     // ===== 확인 후 실행: 계획 검증과 계획 카드 =====
     const DANGER = /삭제|제거|결제|구매|주문하기|송금|이체|전송|발송|탈퇴|해지|확정|승인|제출|초기화|로그아웃|delete|remove|pay|purchase|buy|send|submit|confirm|withdraw|logout|sign ?out/i;
     const TEXT_TYPES = ["text", "search", "email", "url", "tel", "number", "textarea", ""];
-    function indexItems(page) {
-      const m = new Map();
-      page.nav.forEach((x) => m.set(x.id, { kind: "link", label: x.t, href: x.h }));
-      (page.links || []).forEach((x) => m.set(x.id, { kind: "link", label: x.t, href: x.h }));
-      (page.buttons || []).forEach((x) => m.set(x.id, { kind: "button", label: x.t }));
-      page.forms.forEach((f) => f.fields.forEach((x) => m.set(x.id, {
-        kind: "field", type: (x.type || "").toLowerCase(), label: x.label || x.name || "", hasPassword: f.fields.some((y) => y.type === "password"),
-      })));
-      return m;
-    }
     // 실행 전 검증: 허용된 동작인지, 입력할 글이 사용자의 요청에서 나왔는지(화면 속 문장이 시킨 것이 아닌지) 확인한다
     function vetActions(actions, page, userText) {
-      const idx = indexItems(page), steps = [], blocked = [];
+      const steps = [], blocked = [];
       for (const a of actions) {
-        const it = idx.get(a.id);
-        if (!it) { blocked.push({ a, why: "화면에서 항목을 찾지 못했어요" }); continue; }
+        const identified=EnvTargets.resolve(a,page);
+        if(!identified.ok){blocked.push({a,why:identified.why});continue;}
+        const it=identified.item;
         const name = it.label || "(이름 없음)";
         if (a.type === "type") {
           if (it.kind !== "field" || !TEXT_TYPES.includes(it.type)) blocked.push({ a, name, why: "입력할 수 없는 칸이에요 (비밀번호·파일 등은 직접 입력해 주세요)" });
@@ -242,49 +216,39 @@
         });
         if (controller?.signal.aborted) throw new DOMException('중지', 'AbortError');
         remember('model', res.answer);
+        if(taskContext.readOnly){res.actions=[];res.steps=[];res.highlights=[];}
         if (taskContext.card) { taskContext.card.querySelector('.task-state').textContent = '결과'; taskContext.card.classList.add('is-result'); }
         // 대신 실행해 달라는 요청: 계획을 보여주고 확인을 받는다 (확인 없이는 실행하지 않는다)
         if (act && res.actions && res.actions.length && !wantsAction(q)) {
           // 방법만 물은 경우: 실행하지 않고 안내(화면 표시)로 바꾼다
-          const seen = new Set(), ids = [], labs = [];
-          for (const a of res.actions) if (!seen.has(a.id)) { seen.add(a.id); ids.push(a.id); labs.push(a.label || ""); }
-          res.highlights = ids; res.labels = labs; res.actions = [];
+          res.steps=res.actions.map(a=>({id:a.id,target:a.target,label:a.label}));res.actions=[];
           res.answer = res.answer.replace(/\s*아래에서\s*확인\s*후\s*실행해\s*주세요\.?/g, "").trim();
         }
         if (act && res.actions && res.actions.length) {
           const vetted = vetActions(res.actions, page, q);
           if (vetted.steps.length && !vetted.blocked.length) {
-            const grouped = new Map();
-            vetted.steps.forEach((s) => grouped.set(s.a.id, [...(grouped.get(s.a.id) || []), s.short]));
-            if (highlight) { try { await highlight([...grouped.keys()], [...grouped.values()].map((l) => l.join(" → ")), page); } catch { /* 표시 실패는 무시 */ } }
             showPlan(box, res.answer, vetted.steps, url, shot, page, q, taskContext);
             return;
           }
           // 직접 해야 하는 동작이 섞여 있으면 실행하지 않고, 해당 위치를 표시해서 안내한다
-          const bids = vetted.blocked.map((b) => b.a.id).filter(Number.isInteger);
-          if (highlight && bids.length) { try { await highlight(bids, bids.map(() => "직접 하세요"), page); } catch { /* 무시 */ } }
-          box.innerHTML = `<div class="bubble err">⚠️ 안전을 위해 <b>직접 해야 하는 동작</b>이 있어서 대신 실행하지 않아요.<ul class="why">${
-            vetted.blocked.map((b) => `<li>${b.name ? "<b>" + esc(b.name) + "</b> — " : ""}${esc(b.why)}</li>`).join("")}</ul>
-            ${bids.length ? "해당 위치를 화면에 표시했어요." : ""}</div>`;
+          box.innerHTML = `<div class="bubble err">대상을 확인할 수 없거나 <b>직접 해야 하는 동작</b>이 있어 실행하지 않아요.<ul class="why">${
+            vetted.blocked.map((b) => `<li>${b.name ? "<b>" + esc(b.name) + "</b> — " : ""}${esc(b.why)}</li>`).join("")}</ul></div>`;
           return;
         }
         res.answer = soften(res.answer);
         // 안내한 항목을 화면에서 표시 (실패해도 답변은 그대로 보여준다)
-        let shown = [], guessed = false;
-        if (highlight) {
-          let ids = res.highlights;
-          if (!ids.length && res.browserAction === "none") { ids = guessTargets(res.answer, page); guessed = ids.length > 0; }
-          if (ids.length) {
-            const labels = guessed ? [] : (res.labels || []);
-            try { const r = await highlight(ids, labels, page); if (r && r.shown) { shown = ids; hlLabels.set(ids.join(","), {labels,page}); } } catch { shown = []; }
-          }
+        let shown = [];
+        const verified=EnvTargets.guidance(res.steps||[],page,res.answer,q,{readOnly:!!taskContext.readOnly});
+        if(highlight&&res.browserAction==='none'&&verified.length){
+          const ids=verified.map(x=>x.id),labels=verified.map(x=>x.label),targets=verified.map(x=>x.target);
+          try {const r=await highlight(ids,labels,page,targets);if(r?.shown){shown=r.ids||ids;hlLabels.set(shown.join(','),{labels:shown.map(id=>labels[ids.indexOf(id)]),targets:shown.map(id=>targets[ids.indexOf(id)]),page});}}catch{shown=[];}
         }
         box.innerHTML = `<div class="bubble answer">${fmt(res.answer)}</div>` + COPY_BUTTON +
           (res.browserAction !== "none" && browserNav ? `<div class="hl-actions"><button type="button" class="go" data-nav="${res.browserAction}">${NAV_LABEL[res.browserAction]}</button><span class="muted">눌러야 이동해요</span></div>` : "") +
           (shown.length ? `<div class="hl-actions"><span class="muted">화면에 표시했어요</span>
             <button type="button" data-hl="${shown.join(",")}">다시 표시</button>
             <button type="button" data-hl-clear>표시 끄기</button></div>`
-            : res.highlights.length ? `<div class="hl-actions"><span class="muted">⚠️ 안내한 항목이 지금 화면에 보이지 않아 표시하지 못했어요. 접힌 메뉴 안에 있거나 화면이 바뀌었을 수 있어요.</span></div>` : "") +
+            : res.steps?.length ? `<div class="hl-actions"><span class="muted">대상 위치를 확실히 확인하지 못해 표시하지 않았어요.</span></div>` : "") +
           `<details class="answer-details"><summary>참고한 화면</summary><div class="source-title">${esc(page.title || page.url)}</div>${shot ? `<img class="shot" src="${shot}" alt="답변에 참고한 화면">` : ''}<div class="muted">메뉴 ${page.nav.length} · 입력칸 ${page.forms.reduce((n, f) => n + f.fields.length, 0)} · 버튼 ${(page.buttons || []).length}</div></details>`;
       } catch (e) {
         const stopped = e.name === 'AbortError' || controller?.signal.aborted;
@@ -451,6 +415,7 @@
         const card = pr.closest(".plan"), out = card.querySelector(".plan-result"), p = plans.get(+pr.dataset.planRun);
         if (!p) return;
         actionBusy = true; input.disabled = true;
+        stopButton.hidden=false;form.querySelector('[type=submit]').hidden=true;
         toolbar.querySelector('[data-new]').disabled = true;
         p.card.querySelector('.task-state').textContent = '실행 중';
         card.querySelectorAll("button").forEach((b) => (b.disabled = true));
@@ -466,6 +431,7 @@
           remember('model', '실행 결과: ' + results.map(r => r.note).join(' / '));
         } catch (e) { out.textContent = "실행하지 못했어요: " + e.message; p.card.querySelector('.task-state').textContent = '실행 안 됨'; }
         actionBusy = false; input.disabled = false;
+        stopButton.hidden=true;form.querySelector('[type=submit]').hidden=false;
         toolbar.querySelector('[data-new]').disabled = false;
         if (unhighlight) { try { await unhighlight({tabId:p.context.tabId}); } catch { /* 페이지가 이동한 경우 */ } }
         input.focus({ preventScroll: true });
@@ -484,7 +450,7 @@
       const nb = ev.target.closest("[data-nav]");
       if (nb && browserNav) { try { await browserNav(nb.dataset.nav); } catch { /* 이동할 기록이 없는 경우 */ } return; }
       const hb = ev.target.closest("[data-hl]");
-      if (hb && highlight) { try { const saved=hlLabels.get(hb.dataset.hl); if (!saved) return; await highlight(hb.dataset.hl.split(",").map(Number), saved.labels, saved.page); } catch { /* 탭이 바뀐 경우 등 */ } return; }
+      if (hb && highlight) { try { const saved=hlLabels.get(hb.dataset.hl); if (!saved) return; await highlight(hb.dataset.hl.split(",").map(Number), saved.labels, saved.page, saved.targets); } catch { /* 탭이 바뀐 경우 등 */ } return; }
       if (ev.target.closest("[data-hl-clear]") && unhighlight) { try { await unhighlight(); } catch { /* 무시 */ } return; }
       const sv = ev.target.closest("[data-save]");
       if (sv) {

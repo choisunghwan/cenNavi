@@ -1,0 +1,63 @@
+const {chromium}=require(process.env.PLAYWRIGHT_PATH||'playwright');
+const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
+(async()=>{
+ const browser=await chromium.launch({channel:'chrome',headless:true});
+ try {
+  const page=await browser.newPage({viewport:{width:1100,height:760}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
+  await page.setContent('<style>body{font:16px system-ui;background:#f6f7fa;color:#243044;margin:0}aside{position:fixed;inset:0 auto 0 0;width:190px;background:#fff;padding:30px;box-sizing:border-box}main{margin-left:230px;padding:45px}form{padding:28px;background:white;border:1px solid #e0e4eb;border-radius:15px;max-width:620px}input{padding:13px;font:inherit;border:1px solid #bac3d0;border-radius:8px;margin:10px}button{padding:12px 18px;border:0;border-radius:8px;background:#304b80;color:white;margin:10px}</style><aside><b>CenNavi Demo</b><p>대시보드</p><p>주문 조회</p></aside><main><h1>주문 조회</h1><p>고객명으로 주문을 찾아보세요.</p><form><label>고객명<input aria-label="고객명" id="customer"></label><button type="button" id="search">조회</button><button type="button" id="decoy">AI 검색</button></form><p><button type="button">중복</button><button type="button">중복</button></p></main>');
+  await page.addScriptTag({path:path.resolve('extension/pagereader.js')});
+  if(fs.existsSync('extension/interaction.js'))await page.addScriptTag({path:path.resolve('extension/interaction.js')});
+  assert.equal(await page.evaluate(()=>typeof startControlOverlay),'function');
+  await page.evaluate(()=>{window.clicked=0;document.querySelector('#search').onclick=()=>window.clicked++;});
+  const snapshot=()=>page.evaluate(()=>{const p=extractPage();return {snapshot:p.snapshot,id:p.forms.flatMap(f=>f.fields).find(x=>x.label==='조회').id};});
+  let state=await snapshot();
+  const invalid=await page.evaluate(()=>{
+    const fs=document.createElement('fieldset');fs.disabled=true;fs.innerHTML='<input aria-label="잠긴 검색">';document.querySelector('main').appendChild(fs);
+    const nav=document.createElement('nav');nav.innerHTML='<a href="#same">보고서</a> <a href="#same">보고서</a>';document.querySelector('aside').appendChild(nav);
+    const p=extractPage(),field=p.forms.flatMap(f=>f.fields).find(x=>x.label==='잠긴 검색'),link=p.nav.find(x=>x.t==='보고서');
+    return {disabled:window.__guideState.resolve(field.id,'잠긴 검색').ok,ambiguous:window.__guideState.resolve(link.id,'보고서').ok};
+  });
+  assert.equal(invalid.disabled,false);assert.equal(invalid.ambiguous,false);state=await snapshot();
+  assert.equal(await page.evaluate(s=>showVerifiedTargets([s.id],['조회'],s.snapshot,['AI 검색']).shown,state),0);
+  assert.equal(await page.evaluate(s=>showVerifiedTargets([s.id],['조회'],s.snapshot,['조회']).shown,state),1);
+  assert.equal(await page.evaluate(()=>document.activeElement.tagName),'BODY');
+  await page.evaluate(()=>clearHighlight());
+  await page.evaluate(()=>{const cover=document.createElement('div');cover.id='cover';const r=document.querySelector('#search').getBoundingClientRect();cover.style.cssText=`position:fixed;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;z-index:99;background:white`;document.body.appendChild(cover);});
+  assert.equal(await page.evaluate(s=>showVerifiedTargets([s.id],[],s.snapshot,['조회']).shown,state),0);
+  await page.evaluate(()=>document.querySelector('#cover').remove());
+  const startHeld=async token=>{
+   state=await snapshot();
+   await page.evaluate(({state,token})=>{window.proceed=null;startControlOverlay(state.snapshot,token);const control=window.__cenNaviControl,move=control.moveTo;control.moveTo=async target=>{await move(target);await new Promise(resolve=>window.proceed=resolve);};},{state,token});
+   const pending=page.evaluate(({state,token})=>performActions([{type:'click',id:state.id,target:'조회'}],state.snapshot,token),{state,token});
+   await page.waitForFunction(()=>typeof window.proceed==='function');return {pending};
+  };
+  let run=await startHeld('visible');
+  assert.equal(await page.locator('#__cennavi_control').count(),1);
+  const geometry=await page.evaluate(()=>{const a=document.querySelector('#search').getBoundingClientRect(),c=document.querySelector('#__cennavi_control').shadowRoot.querySelector('.control-cursor').getBoundingClientRect();return {dx:Math.abs(c.left+3-a.left-a.width/2),dy:Math.abs(c.top+2-a.top-a.height/2)};});
+  assert.ok(geometry.dx<5&&geometry.dy<5);assert.equal(await page.evaluate(()=>clicked),0);
+  await page.screenshot({path:'docs/screenshots/11-visible-control.png'});
+  await page.evaluate(()=>proceed());assert.equal((await run.pending)[0].ok,true);
+  assert.equal(await page.evaluate(()=>clicked),1);assert.equal(await page.locator('#__cennavi_control').count(),0);
+  run=await startHeld('escape');await page.keyboard.press('Escape');await page.evaluate(()=>proceed());
+  assert.equal((await run.pending)[0].ok,false);assert.equal(await page.evaluate(()=>clicked),1);assert.equal(await page.locator('#__cennavi_control').count(),0);
+  run=await startHeld('button');await page.locator('#__cennavi_control').locator('button').click();await page.evaluate(()=>proceed());
+  assert.equal((await run.pending)[0].ok,false);assert.equal(await page.evaluate(()=>clicked),1);
+  run=await startHeld('removed');await page.evaluate(()=>{document.querySelector('#__cennavi_control').remove();proceed();});
+  assert.equal((await run.pending)[0].ok,false);assert.equal(await page.evaluate(()=>clicked),1);
+  run=await startHeld('layout');await page.evaluate(()=>{document.querySelector('#search').style.marginLeft='80px';proceed();});
+  assert.equal((await run.pending)[0].ok,false);assert.equal(await page.evaluate(()=>clicked),1);
+  await page.evaluate(()=>{document.querySelector('#search').style.marginLeft='';});
+  run=await startHeld('spa');await page.evaluate(()=>{location.hash='new-screen';proceed();});
+  assert.equal((await run.pending)[0].ok,false);assert.equal(await page.evaluate(()=>clicked),1);
+  state=await snapshot();await page.evaluate(s=>{startControlOverlay(s.snapshot,'changed');document.querySelector('#search').textContent='삭제';},state);
+  const changed=await page.evaluate(s=>performActions([{type:'click',id:s.id,target:'조회'}],s.snapshot,'changed'),state);
+  assert.equal(changed[0].ok,false);assert.equal(await page.evaluate(()=>clicked),1);assert.equal(await page.locator('#__cennavi_control').count(),0);
+  await page.evaluate(()=>{document.querySelector('#search').textContent='조회';});
+  await page.emulateMedia({reducedMotion:'reduce'});state=await snapshot();
+  await page.evaluate(s=>startControlOverlay(s.snapshot,'reduced'),state);
+  assert.equal(await page.evaluate(()=>getComputedStyle(document.querySelector('#__cennavi_control').shadowRoot.querySelector('.control-frame')).animationName),'none');
+  await page.evaluate(()=>stopControlOverlay('wrong-token'));assert.equal(await page.locator('#__cennavi_control').count(),1);
+  await page.evaluate(()=>stopControlOverlay('reduced'));assert.equal(await page.locator('#__cennavi_control').count(),0);
+  assert.deepEqual(errors,[]);console.log('Control checks passed: precise guidance, occlusion, pointer geometry, confirmed click, Escape/button stop, changed target, reduced motion and cleanup.');
+ } finally {await browser.close();}
+})().catch(e=>{console.error(e);process.exitCode=1;});

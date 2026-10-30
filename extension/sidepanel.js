@@ -46,7 +46,7 @@ const runInTab = async (func, args = [], page = {}) => {
   const [res] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func, args });
   return res.result;
 };
-const highlight = (ids, labels, page = {}) => runInTab(highlightTargets, [ids, labels || [], page.snapshot], page);
+const highlight = (ids, labels, page = {}, targets = []) => runInTab(showVerifiedTargets, [ids, labels || [], page.snapshot, targets], page);
 const unhighlight = (page = {}) => runInTab(clearHighlight, [], page);
 
 // 연결 점검: 어느 단계에서 막히는지 확인한다
@@ -96,29 +96,59 @@ const browserNav = async (action) => {
 };
 
 // 확인 후 실행: 사용자가 계획 카드에서 [실행]을 눌렀을 때만 호출된다
+let activeActionRun = null;
+const cancelAct = () => activeActionRun?.cancel();
 const act = async (actions, url, context = {}) => {
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  if(activeActionRun)throw new Error('다른 실행이 진행 중이에요.');
+  let tab,onUpdated,timer,cancel,onActivated,onFocus,overlayRequested=false;
+  const cancelled=new Promise(resolve=>{cancel=()=>resolve([{ok:false,note:'실행을 중지했어요.'}]);});
+  const task={token:'cennavi-'+Date.now()+'-'+Math.random(),cancelled:false,cancel(){task.cancelled=true;cancel();}};
+  activeActionRun=task;
+  const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve([{ ok: false, note: "시간이 초과되어 완료 여부를 확인하지 못했어요. 화면을 확인해 주세요." }]), 8000); });
+  try {
+  // The cancellable run exists before the first asynchronous browser call.
+  const initial=await Promise.race([
+    chrome.tabs.query({active:true,lastFocusedWindow:true}).then(tabs=>({tabs})),
+    cancelled.then(results=>({results})),timeout.then(results=>({results})),
+  ]);
+  if(initial.results)return initial.results;
+  [tab]=initial.tabs;
+  if(task.cancelled)return [{ok:false,note:'실행을 중지했어요.'}];
   if (!tab || tab.id !== context.tabId || tab.url !== url) throw new Error("화면이 바뀌었어요. 다시 요청해 주세요.");
   if (EnvMatch.lookup(tab.url).kind === "prod") throw new Error("운영 환경에서는 실행하지 않아요.");
-
-  // 실행 도중 페이지가 이동하면 결과를 돌려받을 수 없으므로, 이동 이벤트와 시간 제한으로도 마무리한다
-  let onUpdated, timer;
+  onActivated=info=>{if(info.tabId!==tab.id)task.cancel();};
+  onFocus=id=>{if(id!==tab.windowId)task.cancel();};
+  chrome.tabs.onActivated.addListener(onActivated);chrome.windows.onFocusChanged.addListener(onFocus);
   const moved = new Promise((resolve) => {
-    onUpdated = (id, info) => { if (id === tab.id && info.status === "loading") resolve([{ ok: false, note: "페이지가 이동했어요. 새 화면에서 결과를 확인해 주세요." }]); };
+    onUpdated = (id, info) => { if (id === tab.id && (info.status === "loading" || (info.url && info.url !== url))) { task.cancelled=true; resolve([{ ok: false, note: "페이지가 이동했어요. 새 화면에서 결과를 확인해 주세요." }]); } };
     chrome.tabs.onUpdated.addListener(onUpdated);
   });
-  const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve([{ ok: false, note: "시간이 초과되어 완료 여부를 확인하지 못했어요. 화면을 확인해 주세요." }]), 8000); });
-  const run = chrome.scripting.executeScript({ target: { tabId: tab.id }, func: performActions, args: [actions, context.snapshot] })
+  const run = (async()=>{
+    overlayRequested=true;
+    const [start]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:startControlOverlay,args:[context.snapshot,task.token]});
+    if(task.cancelled)return [{ok:false,note:'실행을 중지했어요.'}];
+    if(!start?.result?.ok)throw new Error('실행 표시를 시작하지 못했어요. 화면을 다시 확인해 주세요.');
+    await currentTab({tabId:tab.id,url});
+    if(task.cancelled)return [{ok:false,note:'실행을 중지했어요.'}];
+    return chrome.scripting.executeScript({ target: { tabId: tab.id }, func: performActions, args: [actions, context.snapshot, task.token] });
+  })()
     .then(([res]) => (res && res.result) || [{ ok: false, note: "페이지가 이동했어요. 새 화면에서 결과를 확인해 주세요." }])
     .catch((e) => {
       if (/frame|removed|closed|navigat|context/i.test(e.message)) return [{ ok: false, note: "페이지가 이동했어요. 새 화면에서 결과를 확인해 주세요." }];   // 실행 도중 페이지가 바뀐 경우
       throw e;
     });
-  try { return await Promise.race([run, moved, timeout]); }
-  finally { clearTimeout(timer); chrome.tabs.onUpdated.removeListener(onUpdated); }
+  return await Promise.race([run, moved, timeout, cancelled]);
+  }
+  finally {
+    task.cancelled=true;clearTimeout(timer);
+    if(onUpdated)chrome.tabs.onUpdated.removeListener(onUpdated);
+    if(onActivated)chrome.tabs.onActivated.removeListener?.(onActivated);if(onFocus)chrome.windows.onFocusChanged.removeListener?.(onFocus);
+    if(overlayRequested&&tab)chrome.scripting.executeScript({target:{tabId:tab.id},func:stopControlOverlay,args:[task.token]}).catch(()=>{});
+    if(activeActionRun===task)activeActionRun=null;
+  }
 };
 
-EnvChat.mount({ getUrl, getPage, getShot, highlight, unhighlight, browserNav, act, diagnose });
+EnvChat.mount({ getUrl, getPage, getShot, highlight, unhighlight, browserNav, act, cancelAct, diagnose });
 
 async function refresh() { EnvChat.setStatus(await getUrl()); }
 chrome.tabs.onActivated.addListener(refresh);

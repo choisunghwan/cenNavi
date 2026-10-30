@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "CenNavi",
-  "version": "0.8.2",
+  "version": "0.9.0",
   "description": "현재 웹페이지를 이해하고, 필요한 정보를 찾고, 확인받은 입력·클릭을 수행하는 AI 브라우저 도우미",
   "minimum_chrome_version": "114",
   "permissions": ["sidePanel", "tabs", "scripting"],

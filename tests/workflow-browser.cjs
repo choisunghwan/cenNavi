@@ -14,10 +14,14 @@ const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
    res.setHeader('Content-Type','text/event-stream');res.setHeader('Cache-Control','no-cache');
    const outcomes={
     summary:{answer:'실시간 답변입니다. 끝까지 생성됐어요.',actions:[],steps:[]},
-    first:{answer:'검색 화면을 열겠습니다.',actions:[{type:'click',id:1}],steps:[]},
-    second:{answer:'김철수를 입력하고 조회하겠습니다.',actions:[{type:'type',id:10,text:'김철수'},{type:'click',id:11}],steps:[]},
+    first:{answer:'검색 화면을 열겠습니다.',actions:[{type:'click',id:1,target:'주문 조회'}],steps:[]},
+    second:{answer:'김철수를 입력하고 조회하겠습니다.',actions:[{type:'type',id:10,target:'고객명',text:'김철수'},{type:'click',id:11,target:'조회'}],steps:[]},
     done:{answer:'화면에 김철수 조회 결과가 표시됩니다.',actions:[],steps:[]},
-    blocked:{answer:'삭제하겠습니다.',actions:[{type:'click',id:12}],steps:[]},
+    blocked:{answer:'삭제하겠습니다.',actions:[{type:'click',id:12,target:'삭제'}],steps:[]},
+    wrongTarget:{answer:'조회 버튼을 누르세요.',actions:[],steps:[{id:11,target:'주문 조회'}]},
+    guided:{answer:'**조회** 버튼을 누르세요.',actions:[],steps:[{id:11,target:'조회',label:'조회'}]},
+    guessed:{answer:'**조회** 버튼을 누르세요.',actions:[],steps:[]},
+    wrongAction:{answer:'조회하겠습니다.',actions:[{type:'click',id:11,target:'AI 검색'}],steps:[]},
    };
    const requestMode=mode;
    const text=JSON.stringify(outcomes[requestMode]||outcomes.summary),split=Math.min(20,text.length-1);
@@ -56,8 +60,8 @@ const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
   assert.doesNotMatch(await page.locator('#feed').innerText(),/실시간 답변/);
   await page.click('[data-new]');
   await page.evaluate(()=>{
-   window.testActions=0;const script=chrome.scripting.executeScript;
-   chrome.scripting.executeScript=async opts=>{if(opts.func.name==='performActions')window.testActions++;return script(opts);};
+   window.testActions=0;window.testHighlights=0;const script=chrome.scripting.executeScript;
+   chrome.scripting.executeScript=async opts=>{if(opts.func.name==='performActions')window.testActions++;if(opts.func.name==='showVerifiedTargets')window.testHighlights++;return script(opts);};
    SAMPLE_PAGE.forms=[{fields:[{id:10,type:'text',label:'고객명'}]}];
    SAMPLE_PAGE.buttons=[{id:11,t:'조회'},{id:12,t:'삭제'}];
   });
@@ -98,6 +102,13 @@ const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
   await page.evaluate(()=>{const feed=document.querySelector('#feed');feed.style.scrollBehavior='auto';feed.scrollTop=feed.scrollHeight;});
   await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
   await page.screenshot({path:'docs/screenshots/09-clean-task.png',fullPage:true});
+  await page.click('[data-new]');
+  mode='wrongTarget';await ask('조회 버튼은 어디야?');assert.equal(await page.evaluate(()=>testHighlights),0);
+  mode='guessed';await ask('조회 버튼은 어디야?');assert.equal(await page.evaluate(()=>testHighlights),0);
+  mode='guided';await ask('이 화면이 뭐야?');assert.equal(await page.evaluate(()=>testHighlights),0);
+  await tool('요약');await page.waitForFunction(()=>!document.querySelector('#cmd').disabled);assert.equal(await page.evaluate(()=>testHighlights),0);
+  await ask('조회 버튼은 어디야?');assert.equal(await page.evaluate(()=>testHighlights),1);
+  mode='wrongAction';await ask('조회 버튼 눌러줘');assert.equal(await page.locator('[data-plan-run]:enabled').count(),0);
   assert.deepEqual(errors,[]);
   console.log('Workflow browser checks passed: partial streaming, truncated stream, stop/reload, navigation, same-tab continuation, fresh confirmation, blocked action.');
  } finally {await browser?.close();await new Promise(r=>server.close(r));}

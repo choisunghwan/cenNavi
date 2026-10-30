@@ -60,7 +60,8 @@
     // 화면 읽기/하이라이트 흉내 (미리보기에서는 실제 표시는 되지 않고 호출만 확인)
     scripting: { executeScript: async ({ func, args }) => [{ result:
       func.name === "extractPage" ? { ...SAMPLE_PAGE, url: sel.value, snapshot: crypto.randomUUID() } :
-      func.name === "highlightTargets" ? { shown: (args[0] || []).length } :
+      func.name === "showVerifiedTargets" ? { shown: (args[0] || []).length, ids: args[0] } :
+      func.name === "startControlOverlay" ? {ok:true} :
       func.name === "performActions" ? [{ok:true,note:'미리보기 모의 실행입니다. 실제 페이지는 조작하지 않았어요.'}] : { shown: 0 } }] },
   };
 </script>
@@ -70,8 +71,10 @@
 <script src="../shared/local-config.js"></script>
 <script src="../shared/gemini.js"></script>
 <script src="../shared/conversation.js"></script>
+<script src="../shared/targets.js"></script>
 <script src="../shared/chat.js"></script>
 <script src="pagereader.js"></script>
+<script src="interaction.js"></script>
 <script src="sidepanel.js"></script>
 <script>sel.addEventListener("change", () => EnvChat.setStatus(sel.value));</script>
 </body>
