@@ -56,12 +56,13 @@
     links: [], forms: [], buttons: [], tables: [["주문번호", "고객명", "금액", "상태"]], text: "대시보드 오늘의 주문 현황 신규 12건 처리중 5건 완료 40건",
   };
   window.chrome = {
-    tabs: { query: async () => [{ url: sel.value }], onActivated: { addListener() {} }, onUpdated: { addListener() {} } },
+    tabs: { query: async () => [{ id: 1, status: 'complete', url: sel.value }], onActivated: { addListener() {} }, onUpdated: { addListener() {}, removeListener() {} } },
     windows: { onFocusChanged: { addListener() {} } },
     // 화면 읽기/하이라이트 흉내 (미리보기에서는 실제 표시는 되지 않고 호출만 확인)
     scripting: { executeScript: async ({ func, args }) => [{ result:
-      func.name === "extractPage" ? SAMPLE_PAGE :
-      func.name === "highlightTargets" ? { shown: (args[0] || []).length } : { shown: 0 } }] },
+      func.name === "extractPage" ? { ...SAMPLE_PAGE, url: sel.value, snapshot: crypto.randomUUID() } :
+      func.name === "highlightTargets" ? { shown: (args[0] || []).length } :
+      func.name === "performActions" ? [{ok:true,note:'미리보기 모의 실행입니다. 실제 페이지는 조작하지 않았어요.'}] : { shown: 0 } }] },
   };
 </script>
 <script src="../shared/sample-pack.js"></script>

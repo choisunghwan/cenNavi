@@ -6,7 +6,7 @@
     const feed = $("feed"), input = $("cmd"), menu = $("slashMenu"), chips = $("chips"), form = $("form");
 
     const session = EnvConversation.create(manual ? 'screenGuide.web.v1' : 'screenGuide.panel.v1');
-    let controller = null, requestHistory = [], lastRequest = '';
+    let controller = null, requestHistory = [], lastRequest = '', lastTaskContext = {}, actionBusy = false;
     const toolbar = document.createElement('div');
     toolbar.className = 'assistant-tools';
     toolbar.innerHTML = '<button type="button" data-new>＋ 새 대화</button><button type="button" data-export>대화 저장</button><button type="button" data-stop hidden>■ 중지</button><span class="save-state"></span>';
@@ -14,7 +14,7 @@
     const saveState = () => { toolbar.querySelector('.save-state').textContent = session.saved() ? '이 브라우저에 기록 저장' : '기록 저장 공간이 부족해요'; };
     const remember = (role, text) => { session.append(role, text); saveState(); };
     toolbar.querySelector('[data-stop]').onclick = () => controller?.abort();
-    toolbar.querySelector('[data-new]').onclick = () => { if (controller) return; session.clear(); plans.clear(); hlLabels.clear(); feed.replaceChildren(); greet(); saveState(); };
+    toolbar.querySelector('[data-new]').onclick = () => { if (controller || actionBusy) return; session.clear(); plans.clear(); hlLabels.clear(); feed.replaceChildren(); greet(); saveState(); };
     toolbar.querySelector('[data-export]').onclick = () => {
       const text = session.messages().map(x => `### ${x.role === 'user' ? '나' : '화면 길잡이'}\n\n${x.text}`).join('\n\n');
       const url = URL.createObjectURL(new Blob([text], {type:'text/markdown;charset=utf-8'}));
@@ -144,9 +144,9 @@
     const wantsAction = (t) => REQUEST.test(t) && !HOWTO.test(t);
 
     const plans = new Map(); let planSeq = 0;
-    function planHtml(answer, steps, url, shot, page) {
+    function planHtml(answer, steps, url, shot, page, task) {
       const id = ++planSeq;
-      plans.set(id, { actions: steps.map((s) => s.a), url, context: { tabId: page.tabId, snapshot: page.snapshot } });
+      plans.set(id, { actions: steps.map((s) => s.a), url, task, context: { tabId: page.tabId, snapshot: page.snapshot } });
       return (shot ? `<div class="shot-wrap"><img class="shot" src="${shot}" alt="분석한 화면"><span class="muted">분석에 사용한 화면</span></div>` : "") +
         `<div class="bubble answer">${fmt(answer)}</div>
          <div class="plan"><div class="plan-title">🧭 이렇게 실행할게요</div>
@@ -162,7 +162,7 @@
       .replace(/누르겠습니다/g, "눌러 주세요").replace(/누를게요/g, "눌러 주세요");
 
     // 현재 화면 분석: 화면 정보를 읽어 Gemini가 자연어로 답한다
-    async function analyze(box, question, selectionOnly = false) {
+    async function analyze(box, question, selectionOnly = false, taskContext = {}) {
       if (!getPage) {
         box.innerHTML = `<div class="bubble">화면 분석은 <b>확장 프로그램</b>에서만 쓸 수 있어요. (웹 페이지는 다른 사이트의 화면을 읽을 수 없어요)</div>`;
         return;
@@ -171,28 +171,34 @@
         box.innerHTML = `<div class="bubble">화면 분석에는 Gemini 키가 필요해요. <code>/설정</code>에서 입력해 주세요.</div>`;
         return;
       }
-      const url = await getUrl();
-      const found = EnvMatch.lookup(url);
-      if (found.kind === "prod") {
-        box.innerHTML = `<div class="bubble err">⛔ 운영 환경의 화면은 분석하지 않아요.</div>`;
-        return;
-      }
       box.innerHTML = `<div class="bubble thinking">🔍 화면을 캡처하고 읽고 있어요…</div>`;
       try {
         let page;
-        try { page = await getPage(); }
+        try { page = await getPage(taskContext.expected || {}); }
         catch (e) { box.innerHTML = `<div class="bubble err">이 화면은 읽을 수 없어요. (크롬 내부 페이지, 웹스토어 등은 막혀 있어요)<br><span class="muted">사유: ${esc(e.message)}</span><br><code>/진단</code>으로 권한을 점검해 보세요.</div>`; return; }
+        const url = page.url;
+        const found = EnvMatch.lookup(url);
+        if (found.kind === 'prod') throw new Error('운영 환경의 화면은 분석하지 않아요.');
         if (controller?.signal.aborted) throw new DOMException('중지', 'AbortError');
         if (selectionOnly && !page.selection) { box.innerHTML = '<div class="bubble">페이지에서 글을 드래그해 선택한 뒤 다시 눌러 주세요.</div>'; return; }
         // 스크린샷은 선택 사항: 실패해도 텍스트/구조 정보만으로 계속 진행한다
         let shot = "";
-        if (getShot) { try { shot = await getShot(); } catch { shot = ""; } }
+        if (getShot) { try { shot = await getShot(page); } catch { shot = ""; } }
         const env = found.entries.length ? found.entries.map((e) => ({
           project: e.project, environment: EnvMatch.ENV_LABEL[e.type], accounts: e.accounts.map((a) => ({ id: a.id, memo: a.memo })),
         })) : null;
         const q = (question || "").trim() || "이 화면이 어떤 화면인지, 여기서 무엇을 할 수 있는지 알려줘.";
         box.innerHTML = `<div class="bubble thinking">🤖 생각 중…</div>`;
-        const res = await EnvGemini.answer(q, page, env, shot, { history: requestHistory, signal: controller?.signal });
+        const aiQuestion = taskContext.continuation ? `원래 요청: ${q}\n앞 단계 실행 후의 현재 화면이다. 원래 요청이 완료됐는지 보이는 근거로 확인하고, 남은 일이 있으면 현재 화면에서 할 다음 동작만 제안하라. 입력 문자열은 원래 요청에서만 가져오고 이전 단계의 id는 재사용하지 마라. 완료 여부가 불명확하면 확인되지 않았다고 답하라.` : q;
+        const res = await EnvGemini.answer(aiQuestion, page, env, shot, {
+          history: requestHistory, signal: controller?.signal,
+          onText: text => {
+            if (controller?.signal.aborted) return;
+            const follow = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 100;
+            box.innerHTML = `<div class="bubble answer streaming">${fmt(text)}</div><div class="muted">답변 작성 중…</div>`;
+            if (follow) feed.scrollTop = feed.scrollHeight;
+          },
+        });
         if (controller?.signal.aborted) throw new DOMException('중지', 'AbortError');
         remember('model', res.answer);
         // 대신 실행해 달라는 요청: 계획을 보여주고 확인을 받는다 (확인 없이는 실행하지 않는다)
@@ -208,13 +214,13 @@
           if (vetted.steps.length && !vetted.blocked.length) {
             const grouped = new Map();
             vetted.steps.forEach((s) => grouped.set(s.a.id, [...(grouped.get(s.a.id) || []), s.short]));
-            if (highlight) { try { await highlight([...grouped.keys()], [...grouped.values()].map((l) => l.join(" → "))); } catch { /* 표시 실패는 무시 */ } }
-            box.innerHTML = planHtml(res.answer, vetted.steps, url, shot, page);
+            if (highlight) { try { await highlight([...grouped.keys()], [...grouped.values()].map((l) => l.join(" → ")), page); } catch { /* 표시 실패는 무시 */ } }
+            box.innerHTML = planHtml(res.answer, vetted.steps, url, shot, page, q);
             return;
           }
           // 직접 해야 하는 동작이 섞여 있으면 실행하지 않고, 해당 위치를 표시해서 안내한다
           const bids = vetted.blocked.map((b) => b.a.id).filter(Number.isInteger);
-          if (highlight && bids.length) { try { await highlight(bids, bids.map(() => "직접 하세요")); } catch { /* 무시 */ } }
+          if (highlight && bids.length) { try { await highlight(bids, bids.map(() => "직접 하세요"), page); } catch { /* 무시 */ } }
           box.innerHTML = `<div class="bubble err">⚠️ 안전을 위해 <b>직접 해야 하는 동작</b>이 있어서 대신 실행하지 않아요.<ul class="why">${
             vetted.blocked.map((b) => `<li>${b.name ? "<b>" + esc(b.name) + "</b> — " : ""}${esc(b.why)}</li>`).join("")}</ul>
             ${bids.length ? "해당 위치를 화면에 표시했어요." : ""}</div>`;
@@ -228,7 +234,7 @@
           if (!ids.length && res.browserAction === "none") { ids = guessTargets(res.answer, page); guessed = ids.length > 0; }
           if (ids.length) {
             const labels = guessed ? [] : (res.labels || []);
-            try { const r = await highlight(ids, labels); if (r && r.shown) { shown = ids; hlLabels.set(ids.join(","), labels); } } catch { shown = []; }
+            try { const r = await highlight(ids, labels, page); if (r && r.shown) { shown = ids; hlLabels.set(ids.join(","), {labels,page}); } } catch { shown = []; }
           }
         }
         box.innerHTML = (shot ? `<div class="shot-wrap"><img class="shot" src="${shot}" alt="분석한 화면"><span class="muted">분석에 사용한 화면</span></div>` : "") +
@@ -324,7 +330,8 @@
         if (controller?.signal.aborted) throw new DOMException('중지', 'AbortError');
         box.parentElement.remove();
         const cmd = find(r.command) || analysis;           // 알 수 없으면 분석이 기본
-        const args = cmd === analysis && !r.args ? text : (r.args || "").trim();
+        // Classification may choose a command, but cannot rewrite action intent or input text.
+        const args = cmd === analysis ? text : (r.args || "").trim();
         await dispatch(cmd, args, `/${cmd.name}${args ? " " + args : ""} (으)로 이해했어요`);
       } catch (e) {
         box.innerHTML = e.name === "AbortError" ? '<div class="bubble">답변을 중지했어요.</div>' : `<div class="bubble err">⚠️ Gemini 호출에 실패했어요: ${esc(e.message)}<br>
@@ -332,11 +339,11 @@
       }
     }
 
-    async function execute(text) {
+    async function execute(text, taskContext = {}) {
       const t = text.trim();
       if (!t) return;
-      if (controller) return;
-      lastRequest = t;
+      if (controller || actionBusy) return;
+      lastRequest = t; lastTaskContext = taskContext;
       requestHistory = session.messages();
       controller = new AbortController();
       toolbar.querySelector('[data-stop]').hidden = false;
@@ -344,8 +351,9 @@
       const send = form.querySelector('[type=submit]'); send.disabled = true;
       input.disabled = true;
       try {
-      addUser(t);
+      addUser(taskContext.continuation ? '결과 확인 · 다음 단계: ' + t : t);
       remember('user', t);
+      if (taskContext.continuation) { const box = addBot(); await analyze(box, t, false, taskContext); box.parentElement.scrollIntoView({block:'start',behavior:'smooth'}); return; }
       if (!t.startsWith("/")) { await natural(t); return; }
       const [word, ...rest] = t.slice(1).split(/\s+/);
       const cmd = find(word);
@@ -392,20 +400,36 @@
 
     feed.addEventListener("click", async (ev) => {
       if (ev.target.closest('[data-copy-answer]')) { const button=ev.target.closest('[data-copy-answer]'); try { await navigator.clipboard.writeText(button.closest('.body').querySelector('.answer').innerText); button.textContent='복사됨'; } catch { button.textContent='복사 권한을 확인해 주세요'; } return; }
-      if (ev.target.closest('[data-retry]')) { execute(lastRequest); return; }
+      if (ev.target.closest('[data-retry]')) { execute(lastRequest, lastTaskContext); return; }
       const shotImg = ev.target.closest("img.shot");
       if (shotImg) { openLightbox(shotImg.src); return; }
+      const next = ev.target.closest('[data-plan-next]');
+      if (next) {
+        const p = plans.get(+next.dataset.planNext);
+        if (!p || controller || actionBusy) return;
+        next.disabled = true;
+        try { await execute(p.task, { continuation:true, expected:{tabId:p.context.tabId} }); }
+        finally { next.disabled = false; }
+        return;
+      }
       const pr = ev.target.closest("[data-plan-run]");
       if (pr && act) {
-        if (controller) return;
+        if (controller || actionBusy) return;
         const card = pr.closest(".plan"), out = card.querySelector(".plan-result"), p = plans.get(+pr.dataset.planRun);
+        if (!p) return;
+        actionBusy = true; input.disabled = true;
+        toolbar.querySelector('[data-new]').disabled = true;
         card.querySelectorAll("button").forEach((b) => (b.disabled = true));
         out.textContent = "실행 중…";
         try {
           const results = await act(p.actions, p.url, p.context);
-          out.innerHTML = results.map((r, i) => `${r.ok ? "✅" : "⚠️"} ${i + 1}. ${esc(r.note)}`).join("<br>");
+          out.innerHTML = results.map((r, i) => `${r.ok ? "✅" : "⚠️"} ${i + 1}. ${esc(r.note)}`).join("<br>") +
+            `<div class="hl-actions"><button type="button" data-plan-next="${pr.dataset.planRun}">결과 확인 · 다음 단계</button></div>`;
+          remember('model', '실행 결과: ' + results.map(r => r.note).join(' / '));
         } catch (e) { out.textContent = "⚠️ 실행하지 못했어요: " + e.message; }
-        if (unhighlight) { try { await unhighlight(); } catch { /* 페이지가 이동한 경우 */ } }
+        actionBusy = false; input.disabled = false;
+        toolbar.querySelector('[data-new]').disabled = false;
+        if (unhighlight) { try { await unhighlight({tabId:p.context.tabId}); } catch { /* 페이지가 이동한 경우 */ } }
         input.focus({ preventScroll: true });
         return;
       }
@@ -420,7 +444,7 @@
       const nb = ev.target.closest("[data-nav]");
       if (nb && browserNav) { try { await browserNav(nb.dataset.nav); } catch { /* 이동할 기록이 없는 경우 */ } return; }
       const hb = ev.target.closest("[data-hl]");
-      if (hb && highlight) { try { await highlight(hb.dataset.hl.split(",").map(Number), hlLabels.get(hb.dataset.hl) || []); } catch { /* 탭이 바뀐 경우 등 */ } return; }
+      if (hb && highlight) { try { const saved=hlLabels.get(hb.dataset.hl); if (!saved) return; await highlight(hb.dataset.hl.split(",").map(Number), saved.labels, saved.page); } catch { /* 탭이 바뀐 경우 등 */ } return; }
       if (ev.target.closest("[data-hl-clear]") && unhighlight) { try { await unhighlight(); } catch { /* 무시 */ } return; }
       const sv = ev.target.closest("[data-save]");
       if (sv) {

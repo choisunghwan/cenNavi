@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "화면 길잡이",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "지금 보는 화면이 뭔지, 어디로 가야 하는지, 어떤 계정을 쓸지 알려주는 화면 길잡이 데모",
   "minimum_chrome_version": "114",
   "permissions": ["sidePanel", "tabs", "scripting"],

@@ -225,3 +225,4 @@ ul.why { margin: 6px 0 6px 16px; padding: 0; }
 button:disabled { opacity:.5; cursor:not-allowed; }
 .bubble { overflow-wrap:anywhere; }
 .feed { min-height:0; }
+.streaming::after { content:'▍'; color:var(--accent); animation:pulse 1s infinite; }

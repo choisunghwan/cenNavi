@@ -107,7 +107,8 @@ function extractPage() {
 }
 
 // 안내한 항목 주위에 주황 테두리와 "여기예요" 표시를 띄운다. (클릭 등 조작은 하지 않는다)
-function highlightTargets(ids, labels) {
+function highlightTargets(ids, labels, snapshot) {
+  if (snapshot && snapshot !== window.__guideSnapshot) return {shown:0,reason:'stale'};
   const OLD = document.getElementById("__guide_overlay");
   if (OLD && OLD.__stop) OLD.__stop();
   if (OLD) OLD.remove();
@@ -240,7 +241,8 @@ function performActions(actions, snapshot) {
             el.dispatchEvent(new KeyboardEvent("keyup", opts));
             // 페이지가 Enter를 직접 처리하지 않았다면 폼을 제출한다
             if (proceed && el.form) { if (el.form.requestSubmit) el.form.requestSubmit(); else el.form.submit(); }
-            results.push({ ok: true, note: "Enter로 실행했어요" });
+            results.push({ ok: true, note: "Enter로 실행했어요. 결과 확인 후 다음 단계를 진행하세요." });
+            break;
           }
         } else if (a.type === "click") {
           if (DANGER.test(labelOf(el))) { results.push({ ok: false, note: "안전을 위해 직접 눌러야 하는 항목이에요" }); break; }
@@ -249,7 +251,8 @@ function performActions(actions, snapshot) {
           }
           el.scrollIntoView({ block: "center" });
           el.click();
-          results.push({ ok: true, note: "눌렀어요" });
+          results.push({ ok: true, note: "눌렀어요. 결과 확인 후 다음 단계를 진행하세요." });
+          break;
         } else {
           results.push({ ok: false, note: "지원하지 않는 동작이에요" }); break;
         }

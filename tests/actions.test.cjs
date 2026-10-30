@@ -19,7 +19,7 @@ test('Enter cannot submit a password form',async()=>{
 });
 
 function panelRuntime(tab, executeScript, timers = setTimeout) {
-  const ctx=vm.createContext({ chrome:{tabs:{query:async()=>[tab],onUpdated:{addListener(){},removeListener(){}},onActivated:{addListener(){}}},windows:{onFocusChanged:{addListener(){}}},scripting:{executeScript}},EnvCore:{bindCopy(){}},EnvMatch:{lookup:()=>({kind:'none'})},EnvChat:{mount(){},setStatus(){}},setTimeout:timers,clearTimeout,performActions(){}});
+  const ctx=vm.createContext({ chrome:{tabs:{query:async()=>[tab],onUpdated:{addListener(){},removeListener(){}},onActivated:{addListener(){}}},windows:{onFocusChanged:{addListener(){}}},scripting:{executeScript}},EnvCore:{bindCopy(){}},EnvMatch:{lookup:()=>({kind:'none'})},EnvChat:{mount(){},setStatus(){}},setTimeout:timers,clearTimeout,extractPage(){},performActions(){}});
   vm.runInContext(fs.readFileSync('extension/sidepanel.js','utf8'),ctx);return ctx;
 }
 test('same URL in a different tab cannot execute a saved plan',async()=>{
@@ -34,4 +34,47 @@ test('execution timeout reports an unconfirmed result rather than success',async
   const pending=vm.runInContext("act([], 'https://example.test', {tabId:1,snapshot:'x'})",ctx);
   await new Promise(resolve=>setImmediate(resolve));timeout();
   const result=await pending;assert.equal(result[0].ok,false);assert.match(result[0].note,/완료 여부/);
+});
+
+test('continuation refuses to read another active tab before extraction',async()=>{
+  let extracted=false;
+  const ctx=panelRuntime({id:2,url:'https://example.test',status:'complete'},async()=>{extracted=true;return [{result:{url:'https://example.test'}}];});
+  await assert.rejects(vm.runInContext("getPage({tabId:1})",ctx),/탭|화면/);
+  assert.equal(extracted,false);
+});
+test('continuation waits for the original page to finish loading',async()=>{
+  let extracted=false;
+  const ctx=panelRuntime({id:1,url:'https://example.test',status:'loading'},async()=>{extracted=true;return [{result:{url:"https://example.test"}}];});
+  await assert.rejects(vm.runInContext("getPage({tabId:1})",ctx),/로딩|불러/);
+  assert.equal(extracted,false);
+});
+test('capture rejects a switch away and back even if the final tab is unchanged',async()=>{
+  const ctx=panelRuntime({id:1,url:'https://example.test',status:'complete'},async()=>[]);
+  // Re-evaluate with event listeners observable at the Chrome boundary.
+  const callbacks=[];
+  ctx.chrome.tabs.onActivated.addListener=fn=>callbacks.push(fn);
+  ctx.chrome.tabs.captureVisibleTab=async()=>{
+    callbacks.forEach(fn=>fn({tabId:2}));callbacks.forEach(fn=>fn({tabId:1}));
+    return 'pixels-of-tab-2';
+  };
+  const isolated=vm.createContext({...ctx});
+  vm.runInContext(fs.readFileSync('extension/sidepanel.js','utf8'),isolated);
+  await assert.rejects(vm.runInContext("getShot({tabId:1,url:'https://example.test'})",isolated),/화면|탭/);
+});
+test('a click ends the batch before an element on the next screen can be clicked',async()=>{
+  const clicked=[];
+  const button=id=>({isConnected:true,innerText:'조회',getAttribute(){return '';},scrollIntoView(){},click(){clicked.push(id);}});
+  const ctx=vm.createContext({window:{__guideSnapshot:'same',__guideEls:[button(0),button(1)]},setTimeout});
+  vm.runInContext(fs.readFileSync('extension/pagereader.js','utf8'),ctx);
+  const results=await ctx.performActions([{type:'click',id:0},{type:'click',id:1}],'same');
+  assert.deepEqual(clicked,[0]);assert.equal(results.length,1);
+});
+test('Enter ends the batch before the next planned click',async()=>{
+  let clicked=false;
+  const input={isConnected:true,tagName:'INPUT',type:'text',form:null,focus(){},dispatchEvent(){return true;}};
+  const button={isConnected:true,innerText:'조회',getAttribute(){return '';},scrollIntoView(){},click(){clicked=true;}};
+  const ctx=vm.createContext({window:{__guideSnapshot:'same',__guideEls:[input,button]},setTimeout,KeyboardEvent:class{}});
+  vm.runInContext(fs.readFileSync('extension/pagereader.js','utf8'),ctx);
+  const results=await ctx.performActions([{type:'enter',id:0},{type:'click',id:1}],'same');
+  assert.equal(clicked,false);assert.equal(results.length,1);assert.equal(results[0].ok,true);
 });

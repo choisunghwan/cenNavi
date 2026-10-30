@@ -1,9 +1,9 @@
 {
   "name": "screen-guide-extension",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": true,
   "scripts": {
     "test": "node --test tests/*.test.cjs",
-    "test:browser": "node tests/browser.cjs"
+    "test:browser": "node tests/browser.cjs && node tests/workflow-browser.cjs"
   }
 }

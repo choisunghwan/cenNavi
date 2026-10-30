@@ -1,32 +1,53 @@
 // 사이드 패널은 열려 있는 동안 계속 살아 있으므로, 탭 전환/주소 변경 때마다 상태 표시를 갱신한다
 EnvCore.bindCopy();
 
+// Compare an epoch as well as the final tab: switching away and back also invalidates a capture.
+let contextVersion = 0;
+chrome.tabs.onActivated.addListener(() => { contextVersion++; });
+chrome.tabs.onUpdated.addListener((_id, info) => { if (info.url || info.status === 'loading') contextVersion++; });
+chrome.windows.onFocusChanged.addListener(() => { contextVersion++; });
+
 const getUrl = async () => {
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   return tab?.url || "";
 };
 
 // 현재 탭의 화면 구조를 읽어온다 (입력값은 읽지 않음)
-const getPage = async () => {
+const currentTab = async (expected = {}) => {
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  if (!tab || (expected.tabId !== undefined && tab.id !== expected.tabId) || (expected.url && tab.url !== expected.url)) throw new Error('작업하던 탭 또는 화면이 바뀌었어요. 원래 탭에서 다시 시도해 주세요.');
+  if (tab.status === 'loading') throw new Error('페이지를 불러오는 중이에요. 로딩이 끝난 뒤 다시 눌러 주세요.');
+  if (EnvMatch.lookup(tab.url).kind === 'prod') throw new Error('운영 환경의 화면은 분석하거나 실행하지 않아요.');
+  return tab;
+};
+const getPage = async (expected = {}) => {
+  const version = contextVersion;
+  const tab = await currentTab(expected);
   const [res] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: extractPage });
+  await currentTab({tabId:tab.id,url:tab.url});
+  if (version !== contextVersion) throw new Error('분석 중 탭 또는 화면이 바뀌었어요. 다시 요청해 주세요.');
+  if (res.result.url !== tab.url) throw new Error('분석 중 화면이 이동했어요. 다시 요청해 주세요.');
   return { ...res.result, tabId: tab.id };
 };
 
 // 현재 탭의 보이는 영역을 캡처한다 (JPEG로 줄여서 전송량을 낮춘다)
-const getShot = async () => {
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  return chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 70 });
+const getShot = async (page = {}) => {
+  const version = contextVersion;
+  const tab = await currentTab(page);
+  const shot = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 70 });
+  await currentTab({tabId:tab.id,url:tab.url});
+  if (version !== contextVersion) throw new Error('캡처 중 탭 또는 화면이 바뀌었어요. 다시 요청해 주세요.');
+  return shot;
 };
 
 // 안내한 항목을 화면에 표시/해제 (조작은 하지 않음)
-const runInTab = async (func, args = []) => {
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+const runInTab = async (func, args = [], page = {}) => {
+  const tab = await currentTab(page);
   const [res] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func, args });
   return res.result;
 };
-const highlight = (ids, labels) => runInTab(highlightTargets, [ids, labels || []]);
-const unhighlight = () => runInTab(clearHighlight);
+const highlight = (ids, labels, page = {}) => runInTab(highlightTargets, [ids, labels || [], page.snapshot], page);
+const unhighlight = (page = {}) => runInTab(clearHighlight, [], page);
 
 // 연결 점검: 어느 단계에서 막히는지 확인한다
 const diagnose = async () => {

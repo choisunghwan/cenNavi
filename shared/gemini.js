@@ -47,11 +47,76 @@
 비밀번호는 다루지 않는다.`;
   }
 
+  // Decode only the answer string; unfinished JSON must never expose actions.
+  function partialAnswer(raw) {
+    const start = /(?:^\s*\{|,)\s*"answer"\s*:\s*"/.exec(raw);
+    if (!start) return "";
+    let text = "";
+    for (let i = start.index + start[0].length; i < raw.length; i++) {
+      const c = raw[i];
+      if (c === '"') break;
+      if (c !== '\\') { text += c; continue; }
+      if (i + 1 >= raw.length) break;
+      const escaped = raw[++i];
+      if (escaped === 'u') {
+        const hex = raw.slice(i + 1, i + 5);
+        if (!/^[0-9a-f]{4}$/i.test(hex)) break;
+        text += String.fromCharCode(parseInt(hex, 16)); i += 4;
+      } else {
+        const escapes = { '"':'"', '\\':'\\', '/':'/', n:'\n', r:'\r', t:'\t', b:'\b', f:'\f' };
+        if (!(escaped in escapes)) break;
+        text += escapes[escaped];
+      }
+    }
+    // Do not render a dangling UTF-16 surrogate while the next chunk is pending.
+    return text.replace(/[\uD800-\uDBFF]$/, '');
+  }
+
+  async function readStream(res, signal, onText) {
+    if (!res.body) throw new Error('응답 스트림이 비어 있어요.');
+    const reader = res.body.getReader(), decoder = new TextDecoder();
+    let pending = '', raw = '', finish = '', previous = '';
+    const check = () => { if (signal.aborted) throw new DOMException('중지했어요.', 'AbortError'); };
+    const consume = (event) => {
+      const data = event.split(/\r?\n/).filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n');
+      if (!data || data === '[DONE]') return;
+      let chunk;
+      try { chunk = JSON.parse(data); } catch { throw new Error('스트리밍 응답 형식이 올바르지 않아요.'); }
+      if (chunk.error) throw new Error(chunk.error.message || 'AI 응답 오류');
+      if (chunk.promptFeedback?.blockReason) throw new Error('AI가 이 응답을 차단했어요.');
+      const candidate = chunk.candidates?.[0];
+      if (candidate?.finishReason) finish = candidate.finishReason;
+      if (finish && finish !== 'STOP') throw new Error('응답이 완료되지 않았어요 (' + finish + ').');
+      raw += (candidate?.content?.parts || []).filter(p => !p.thought).map(p => p.text || '').join('');
+      const text = partialAnswer(raw);
+      if (text !== previous) { check(); previous = text; onText(text); }
+    };
+    try {
+      while (true) {
+        check();
+        const { value, done } = await reader.read();
+        check();
+        pending += done ? decoder.decode() : decoder.decode(value, { stream: true });
+        let boundary;
+        while ((boundary = /\r?\n\r?\n/.exec(pending))) {
+          consume(pending.slice(0, boundary.index));
+          pending = pending.slice(boundary.index + boundary[0].length);
+        }
+        if (done) break;
+      }
+      if (pending.trim()) consume(pending);
+      if (finish !== 'STOP' || !raw) throw new Error('응답 스트림이 완료되기 전에 중단됐어요. 다시 시도해 주세요.');
+      return raw;
+    } finally { await reader.cancel().catch(() => {}); }
+  }
+
   // 공통 호출: 오류 메시지를 사람이 읽을 수 있게 던진다
   async function callGemini(body, options = {}) {
     const key = getKey();
     if (!key) throw new Error("Gemini 키가 설정되지 않았어요.");
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(getModel())}:generateContent?key=${encodeURIComponent(key)}`;
+    const streaming = typeof options.onText === 'function';
+    const method = streaming ? 'streamGenerateContent?alt=sse&' : 'generateContent?';
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(getModel())}:${method}key=${encodeURIComponent(key)}`;
     const controller = new AbortController();
     const cancel = () => controller.abort();
     if (options.signal?.aborted) controller.abort();
@@ -60,8 +125,12 @@
     const timer = setTimeout(() => { timedOut = true; controller.abort(); }, 60000);
     try {
     const res = await fetch(url, { method: "POST", signal: controller.signal, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (res.ok && streaming && res.headers?.get('content-type')?.includes('text/event-stream')) return await readStream(res, controller.signal, options.onText);
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data?.error?.message || `HTTP ${res.status}`);
+    if (data.promptFeedback?.blockReason) throw new Error('AI가 이 응답을 차단했어요.');
+    const finish = data.candidates?.[0]?.finishReason;
+    if (finish && finish !== 'STOP') throw new Error('응답이 완료되지 않았어요 (' + finish + ').');
     const raw = data?.candidates?.[0]?.content?.parts?.map((p) => p.text || "").join("");
     if (!raw) throw new Error("응답이 비어 있어요 (차단되었을 수 있어요).");
     return raw;
@@ -165,6 +234,7 @@
     }, options);
     try {
       const r = JSON.parse(raw);
+      if (!r || typeof r.answer !== 'string' || !r.answer.trim()) throw new Error('Invalid answer');
       const steps = (r.steps || []).filter((x) => Number.isInteger(x.id)).slice(0, 4);
       const nav = ["back", "forward", "reload"].includes(r.browserAction) ? r.browserAction : "none";
       const actions = nav !== "none" ? [] : (r.actions || [])
@@ -173,7 +243,7 @@
       return { answer: String(r.answer || "").trim(), browserAction: nav, actions,
         highlights: nav === "none" ? steps.map((x) => x.id) : [], labels: nav === "none" ? steps.map((x) => String(x.label || "").slice(0, 20)) : [] };
     } catch {
-      return { answer: raw.trim(), browserAction: "none", actions: [], highlights: [], labels: [] };   // JSON이 아니면 본문만 사용
+      throw new Error('AI 응답 형식을 해석하지 못했어요. 다시 시도해 주세요.');
     }
   }
 
