@@ -27,9 +27,9 @@
     stopButton.onclick = () => controller?.abort();
     toolbar.querySelector('[data-new]').onclick = () => { if (controller || actionBusy) return; session.clear(); plans.clear(); hlLabels.clear(); feed.replaceChildren(); greet(); saveState(); };
     function exportConversation() {
-      const text = session.messages().map(x => `### ${x.role === 'user' ? '나' : '화면 길잡이'}\n\n${x.text}`).join('\n\n');
+      const text = session.messages().map(x => `### ${x.role === 'user' ? '나' : 'CenNavi'}\n\n${x.text}`).join('\n\n');
       const url = URL.createObjectURL(new Blob([text], {type:'text/markdown;charset=utf-8'}));
-      const a = document.createElement('a'); a.href = url; a.download = '화면길잡이-대화.md'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+      const a = document.createElement('a'); a.href = url; a.download = 'CenNavi-대화.md'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
 
     // 명령 정의: name(한글) + alias(영문 등), arg가 있으면 인자를 받는 명령

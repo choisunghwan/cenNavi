@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "화면 길잡이",
-  "version": "0.8.0",
-  "description": "지금 보는 화면이 뭔지, 어디로 가야 하는지, 어떤 계정을 쓸지 알려주는 화면 길잡이 데모",
+  "name": "CenNavi",
+  "version": "0.8.1",
+  "description": "현재 웹페이지를 이해하고, 필요한 정보를 찾고, 확인받은 입력·클릭을 수행하는 AI 브라우저 도우미",
   "minimum_chrome_version": "114",
   "permissions": ["sidePanel", "tabs", "scripting"],
   "host_permissions": ["<all_urls>"],
@@ -10,7 +10,7 @@
   "side_panel": { "default_path": "extension/sidepanel.html" },
   "icons": { "16": "icons/icon16.png", "32": "icons/icon32.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
   "action": {
-    "default_title": "화면 길잡이",
+    "default_title": "CenNavi",
     "default_icon": { "16": "icons/icon16.png", "32": "icons/icon32.png" }
   }
 }

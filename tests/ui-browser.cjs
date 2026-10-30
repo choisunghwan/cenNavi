@@ -11,6 +11,7 @@ const http=require('node:http'),fs=require('node:fs'),path=require('node:path'),
   await page.route('**/generativelanguage.googleapis.com/**',route=>{apiCount++;if(failNext){failNext=false;return route.fulfill({status:503,json:{error:{message:'테스트용 연결 실패'}}});}return route.fulfill({json:{candidates:[{content:{parts:[{text:JSON.stringify(route.request().url().includes(':streamGenerateContent')?{answer:'요청한 내용을 확인했습니다.',steps:[],actions:[]}:{command:'분석',args:'임의로 바꾼 문장'})}]}}]}});});
   const origin=`http://127.0.0.1:${server.address().port}`;
   await page.goto(origin+'/extension/preview.html');
+  assert.equal(await page.locator('h1').innerText(),'CenNavi');
   assert.equal(await page.locator('textarea#cmd').count(),1);
   assert.equal(await page.locator('.assistant-tools').count(),0);
   assert.equal(await page.locator('[data-suggest]').count(),3);
@@ -37,7 +38,7 @@ const http=require('node:http'),fs=require('node:fs'),path=require('node:path'),
   await page.setViewportSize({width:320,height:720});
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
   await page.emulateMedia({colorScheme:'dark'});await page.screenshot({path:'docs/screenshots/10-dark-narrow.png'});
-  await page.goto(origin+'/web/index.html');assert.equal(await page.locator('textarea#cmd').count(),1);
+  await page.goto(origin+'/web/index.html');assert.equal(await page.locator('textarea#cmd').count(),1);assert.equal(await page.locator('h1').innerText(),'CenNavi');
   await page.locator('[data-menu-toggle]').click();await page.locator('[data-cmd="로그인"]').click();await page.waitForFunction(()=>!document.querySelector('#cmd').disabled);
   await page.locator('dialog [data-run]').first().click();await page.waitForFunction(()=>!document.querySelector('#cmd').disabled);
   assert.ok(await page.locator('dialog .accts').count()>0);assert.equal(await page.locator('#feed .accts').count(),0);
