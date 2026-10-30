@@ -1,0 +1,46 @@
+const {chromium}=require(process.env.PLAYWRIGHT_PATH||'playwright');
+const http=require('node:http'),fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
+(async()=>{
+ const root=process.cwd();
+ const server=http.createServer((req,res)=>{const file=path.resolve(root,'.'+decodeURIComponent(req.url.split('?')[0]));if(!file.startsWith(root+path.sep)||file.endsWith('local-config.js')){res.writeHead(404);return res.end();}fs.readFile(file,(err,data)=>{if(err){res.writeHead(404);return res.end();}res.setHeader('Content-Type',file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':file.endsWith('.png')?'image/png':'text/html');res.end(data);});});
+ await new Promise(r=>server.listen(0,'127.0.0.1',r));let browser;
+ try {
+  browser=await chromium.launch({channel:'chrome',headless:true});const page=await browser.newPage({viewport:{width:460,height:900}});
+  const errors=[];page.on('pageerror',e=>errors.push(e.message));
+  let failNext=false, apiCount=0;
+  await page.route('**/generativelanguage.googleapis.com/**',route=>{apiCount++;if(failNext){failNext=false;return route.fulfill({status:503,json:{error:{message:'테스트용 연결 실패'}}});}return route.fulfill({json:{candidates:[{content:{parts:[{text:JSON.stringify(route.request().url().includes(':streamGenerateContent')?{answer:'요청한 내용을 확인했습니다.',steps:[],actions:[]}:{command:'분석',args:'임의로 바꾼 문장'})}]}}]}});});
+  const origin=`http://127.0.0.1:${server.address().port}`;
+  await page.goto(origin+'/extension/preview.html');
+  assert.equal(await page.locator('textarea#cmd').count(),1);
+  assert.equal(await page.locator('.assistant-tools').count(),0);
+  assert.equal(await page.locator('[data-suggest]').count(),3);
+  assert.equal(await page.locator('[data-cmd="진단"]').isVisible(),false);
+  await page.screenshot({path:'docs/screenshots/08-welcome.png'});
+  await page.locator('[data-menu-toggle]').click();await page.locator('[data-cmd="설정"]').click();
+  assert.equal(await page.locator('dialog[open]').count(),1);
+  assert.equal(await page.locator('#feed .gem-settings').count(),0);
+  await page.keyboard.press('Escape');assert.equal(await page.locator('dialog[open]').count(),0);
+  await page.locator('[data-menu-toggle]').click();await page.keyboard.press('Escape');assert.equal(await page.locator('#assistantMenu').isVisible(),false);
+  await page.evaluate(()=>EnvGemini.save({key:'ui-fixture-only'}));
+  await page.fill('#cmd','첫 줄');await page.press('#cmd','Shift+Enter');await page.type('#cmd','둘째 줄');
+  assert.equal(await page.inputValue('#cmd'),'첫 줄\n둘째 줄');assert.equal(await page.locator('.msg.user').count(),0);
+  await page.press('#cmd','Enter');await page.waitForFunction(()=>!document.querySelector('#cmd').disabled);
+  assert.equal(await page.locator('.msg.user').count(),1);assert.equal(await page.locator('[data-suggest]:visible').count(),0);
+  await page.fill('#cmd','주문 환경에서 무엇을 할 수 있어?');await page.press('#cmd','Enter');await page.waitForFunction(()=>!document.querySelector('#cmd').disabled);
+  assert.doesNotMatch(await page.locator('#feed').innerText(),/으로 이해했어요|으\)로 이해했어요/);
+  await page.evaluate(()=>{SAMPLE_PAGE.selection='선택한 글';});failNext=true;
+  await page.locator('[data-menu-toggle]').click();await page.locator('[data-cmd="선택"]').click();await page.waitForFunction(()=>!document.querySelector('#cmd').disabled);
+  assert.equal(await page.locator('[data-retry]').count(),1);
+  await page.evaluate(()=>{SAMPLE_PAGE.selection='';});const beforeRetry=apiCount;
+  await page.locator('[data-retry]').click();await page.waitForFunction(()=>!document.querySelector('#cmd').disabled);
+  assert.match(await page.locator('#feed').innerText(),/글을 드래그/);assert.equal(apiCount,beforeRetry);
+  await page.setViewportSize({width:320,height:720});
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+  await page.emulateMedia({colorScheme:'dark'});await page.screenshot({path:'docs/screenshots/10-dark-narrow.png'});
+  await page.goto(origin+'/web/index.html');assert.equal(await page.locator('textarea#cmd').count(),1);
+  await page.locator('[data-menu-toggle]').click();await page.locator('[data-cmd="로그인"]').click();await page.waitForFunction(()=>!document.querySelector('#cmd').disabled);
+  await page.locator('dialog [data-run]').first().click();await page.waitForFunction(()=>!document.querySelector('#cmd').disabled);
+  assert.ok(await page.locator('dialog .accts').count()>0);assert.equal(await page.locator('#feed .accts').count(),0);
+  assert.deepEqual(errors,[]);console.log('UI checks passed: quiet welcome, tools dialog, Escape, multiline composer, no internal narration, narrow/dark/web layout.');
+ } finally {await browser?.close();await new Promise(r=>server.close(r));}
+})().catch(e=>{console.error(e);process.exitCode=1;});

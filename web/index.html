@@ -10,7 +10,7 @@
 <body class="chat web-chat">
 <div class="app">
   <header class="chat-head">
-    <h1><img class="logo" src="../icons/icon48.png" alt="">화면 길잡이</h1>
+    <div class="head-row"><h1><img class="logo" src="../icons/icon48.png" alt="">화면 길잡이</h1><div class="head-actions"><button type="button" class="icon-button" data-new aria-label="새 대화" title="새 대화">＋</button><button type="button" class="icon-button" data-menu-toggle aria-label="도구와 설정" aria-expanded="false" aria-controls="assistantMenu" title="도구와 설정">⋯</button></div></div>
     <div id="status" class="status none"></div>
   </header>
 
@@ -18,12 +18,11 @@
 
   <footer class="composer">
     <div id="slashMenu" class="slash hidden"></div>
-    <div id="chips" class="chips"></div>
     <form id="form" autocomplete="off">
-      <span class="prompt">/</span>
-      <input id="cmd" type="text" spellcheck="false" placeholder="명령을 입력하세요 (예: /로그인 localhost:8080)">
-      <button type="submit" class="send" title="실행">↵</button>
+      <textarea id="cmd" rows="2" spellcheck="false" aria-label="메시지" placeholder="환경이나 계정을 물어보세요"></textarea>
+      <div class="composer-bottom"><span class="composer-context">환경 · 계정 안내</span><button type="submit" class="send" title="메시지 전송" aria-label="메시지 전송">↑</button><button type="button" class="send stop" data-stop title="답변 중지" aria-label="답변 중지" hidden>■</button></div>
     </form>
+    <div class="composer-hint">Enter 전송 <span>·</span> Shift+Enter 줄바꿈</div>
   </footer>
 </div>
 <div id="toast" class="toast">복사됨</div>

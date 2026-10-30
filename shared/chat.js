@@ -3,23 +3,34 @@
   const { $, esc, renderNow, renderList, resolveUrl, ENTRIES } = EnvCore;
 
   function mount({ getUrl, getPage, getShot, highlight, unhighlight, browserNav, act, diagnose, manual = false }) {
-    const feed = $("feed"), input = $("cmd"), menu = $("slashMenu"), chips = $("chips"), form = $("form");
+    const feed = $("feed"), input = $("cmd"), menu = $("slashMenu"), form = $("form");
+    const chips = document.createElement('div'); chips.id = 'chips'; chips.className = 'suggestions';
 
     const session = EnvConversation.create(manual ? 'screenGuide.web.v1' : 'screenGuide.panel.v1');
-    let controller = null, requestHistory = [], lastRequest = '', lastTaskContext = {}, actionBusy = false;
-    const toolbar = document.createElement('div');
-    toolbar.className = 'assistant-tools';
-    toolbar.innerHTML = '<button type="button" data-new>＋ 새 대화</button><button type="button" data-export>대화 저장</button><button type="button" data-stop hidden>■ 중지</button><span class="save-state"></span>';
-    feed.before(toolbar);
-    const saveState = () => { toolbar.querySelector('.save-state').textContent = session.saved() ? '이 브라우저에 기록 저장' : '기록 저장 공간이 부족해요'; };
+    let controller = null, requestHistory = [], actionBusy = false;
+    const toolbar = document.querySelector('.chat-head'), stopButton = form.querySelector('[data-stop]');
+    const tools = document.createElement('div'); tools.id = 'assistantMenu'; tools.className = 'tool-menu'; tools.hidden = true;
+    tools.setAttribute('aria-label', '도구와 설정'); toolbar.appendChild(tools);
+    const toggle = toolbar.querySelector('[data-menu-toggle]');
+    function closeTools(focus = false) { tools.hidden = true; toggle.setAttribute('aria-expanded', 'false'); if (focus) toggle.focus(); }
+    toggle.onclick = () => { tools.hidden = !tools.hidden; toggle.setAttribute('aria-expanded', String(!tools.hidden)); if (!tools.hidden) tools.querySelector('button')?.focus(); };
+    document.addEventListener('click', e => { if (!tools.contains(e.target) && !toggle.contains(e.target)) closeTools(); });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape' && !tools.hidden) { closeTools(true); e.preventDefault(); } });
+    const utility = document.createElement('dialog'); utility.className = 'utility-dialog';
+    utility.innerHTML = '<div class="utility-head"><h2 id="utilityTitle"></h2><button type="button" class="icon-button" aria-label="닫기" data-utility-close>×</button></div><div class="utility-body"></div>';
+    utility.setAttribute('aria-labelledby', 'utilityTitle'); document.body.appendChild(utility);
+    utility.querySelector('[data-utility-close]').onclick = () => utility.close();
+    utility.addEventListener('click', e => { if (e.target === utility) utility.close(); });
+    utility.addEventListener('close', () => toggle.focus());
+    const saveState = () => { tools.querySelector('.save-state').textContent = session.saved() ? '대화는 이 기기에 저장됩니다' : '기록 저장 공간이 부족해요'; };
     const remember = (role, text) => { session.append(role, text); saveState(); };
-    toolbar.querySelector('[data-stop]').onclick = () => controller?.abort();
+    stopButton.onclick = () => controller?.abort();
     toolbar.querySelector('[data-new]').onclick = () => { if (controller || actionBusy) return; session.clear(); plans.clear(); hlLabels.clear(); feed.replaceChildren(); greet(); saveState(); };
-    toolbar.querySelector('[data-export]').onclick = () => {
+    function exportConversation() {
       const text = session.messages().map(x => `### ${x.role === 'user' ? '나' : '화면 길잡이'}\n\n${x.text}`).join('\n\n');
       const url = URL.createObjectURL(new Blob([text], {type:'text/markdown;charset=utf-8'}));
       const a = document.createElement('a'); a.href = url; a.download = '화면길잡이-대화.md'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
-    };
+    }
 
     // 명령 정의: name(한글) + alias(영문 등), arg가 있으면 인자를 받는 명령
     const COMMANDS = [
@@ -54,6 +65,17 @@
       { name: "지우기", alias: ["clear"], icon: "🧹", desc: "대화 내용 지우기",
         run: () => { session.clear(); plans.clear(); hlLabels.clear(); feed.innerHTML = ""; greet(); saveState(); }, silent: true },
     ];
+
+    tools.innerHTML = '<div class="menu-label">페이지 도구</div>' + ['요약', '선택', '번역'].map(name => `<button type="button" data-cmd="${name}">${name}<span>↗</span></button>`).join('') +
+      '<div class="menu-label">환경과 설정</div>' + ['로그인', '환경', '설정', '진단', '도움말'].map(name => `<button type="button" data-cmd="${name}">${name}</button>`).join('') +
+      '<button type="button" data-export>대화 내보내기</button><div class="save-state"></div>';
+    tools.querySelector('[data-export]').onclick = () => { closeTools(); exportConversation(); };
+    tools.addEventListener('click', e => {
+      const button = e.target.closest('[data-cmd]'); if (!button) return;
+      closeTools(); execute('/' + button.dataset.cmd, {utility:['로그인','환경','설정','진단','도움말'].includes(button.dataset.cmd), label:toolLabel(button.dataset.cmd)});
+    });
+    function toolLabel(name) { return ({요약:'이 페이지를 요약해줘',선택:'선택한 내용을 설명해줘',번역:'한국어로 번역해줘'})[name] || '/' + name; }
+    const COPY_BUTTON = '<div class="answer-actions"><button type="button" class="icon-button" data-copy-answer aria-label="답변 복사" title="답변 복사"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/></svg></button></div>';
 
     // 아주 간단한 서식: **굵게**, `코드`, "- " 불릿
     const fmt = (t) => esc(t)
@@ -144,15 +166,35 @@
     const wantsAction = (t) => REQUEST.test(t) && !HOWTO.test(t);
 
     const plans = new Map(); let planSeq = 0;
+    const retryRequests = new WeakMap();
     function planHtml(answer, steps, url, shot, page, task) {
       const id = ++planSeq;
-      plans.set(id, { actions: steps.map((s) => s.a), url, task, context: { tabId: page.tabId, snapshot: page.snapshot } });
-      return (shot ? `<div class="shot-wrap"><img class="shot" src="${shot}" alt="분석한 화면"><span class="muted">분석에 사용한 화면</span></div>` : "") +
-        `<div class="bubble answer">${fmt(answer)}</div>
-         <div class="plan"><div class="plan-title">🧭 이렇게 실행할게요</div>
-           <div class="plan-steps">${steps.map((s, i) => `<div class="li step"><span class="n">${i + 1}</span><span><b>${esc(s.target)}</b> — ${esc(s.desc)}</span></div>`).join("")}</div>
-           <div class="hl-actions"><button type="button" class="go" data-plan-run="${id}">▶ 실행</button><button type="button" data-plan-cancel="${id}">취소</button><span class="muted">눌러야 실행돼요</span></div>
-           <div class="plan-result muted"></div></div>`;
+      plans.set(id, { actions: steps.map((s) => s.a), steps, url, task, context: { tabId: page.tabId, snapshot: page.snapshot } });
+      return `<div class="plan"><div class="plan-summary">${fmt(answer)}</div>
+        <ol class="plan-steps">${steps.map(s => `<li><span class="step-target">${esc(s.target)}</span><span class="step-desc">${esc(s.desc)}</span></li>`).join('')}</ol>
+        <div class="plan-controls"><button type="button" class="primary" data-plan-run="${id}">실행</button><button type="button" class="text-button" data-plan-cancel="${id}">취소</button><span>확인 후 실행합니다</span></div>
+        <div class="plan-result" role="status"></div></div>`;
+    }
+    function showPlan(box, answer, steps, url, shot, page, task, taskContext) {
+      const html = planHtml(answer, steps, url, shot, page, task);
+      let card = taskContext.card;
+      if (!card) {
+        box.innerHTML = `<section class="task-card" aria-label="작업 진행"><div class="task-heading"><span class="task-symbol" aria-hidden="true">↗</span><strong>작업 진행</strong><span class="task-state">확인 필요</span></div><div class="task-goal">${esc(task)}</div><details class="task-history" hidden><summary>실행 기록</summary><div class="task-history-list"></div></details><div class="task-current"></div></section>`;
+        card = box.querySelector('.task-card');
+      }
+      card.classList.remove('is-result'); card.querySelector('.task-state').textContent = '확인 필요';
+      card.querySelector('.task-current').innerHTML = html;
+      plans.get(planSeq).card = card;
+    }
+    function archiveStep(plan) {
+      if (plan.archived) return;
+      const history = plan.card.querySelector('.task-history'), list = history.querySelector('.task-history-list');
+      const entry = document.createElement('div'); entry.className = 'history-step';
+      const title = document.createElement('strong'); title.textContent = plan.steps.map(s => s.target).join(' → ');
+      const note = document.createElement('p'); note.textContent = (plan.results || []).map(r => r.note).join(' / ');
+      entry.append(title, note); list.appendChild(entry); history.hidden = false;
+      history.querySelector('summary').textContent = `이전 ${list.children.length}개 단계 보기`;
+      plan.archived = true;
     }
 
     // 안내만 하는 답변에서 "눌러 드릴게요"처럼 대신 해 주겠다는 말투를 안내 말투로 바꾼다 (실제로는 대신 하지 않으므로)
@@ -168,14 +210,13 @@
         return;
       }
       if (!EnvGemini.getKey()) {
-        box.innerHTML = `<div class="bubble">화면 분석에는 Gemini 키가 필요해요. <code>/설정</code>에서 입력해 주세요.</div>`;
+        box.innerHTML = '<div class="bubble">AI를 연결하면 이 화면에 대해 물어볼 수 있어요.<div><button type="button" data-open-settings>AI 연결 설정</button></div></div>';
         return;
       }
-      box.innerHTML = `<div class="bubble thinking">🔍 화면을 캡처하고 읽고 있어요…</div>`;
+      box.innerHTML = '<div class="bubble thinking" role="status">현재 화면을 살펴보고 있어요…</div>';
       try {
         let page;
-        try { page = await getPage(taskContext.expected || {}); }
-        catch (e) { box.innerHTML = `<div class="bubble err">이 화면은 읽을 수 없어요. (크롬 내부 페이지, 웹스토어 등은 막혀 있어요)<br><span class="muted">사유: ${esc(e.message)}</span><br><code>/진단</code>으로 권한을 점검해 보세요.</div>`; return; }
+        page = await getPage(taskContext.expected || {});
         const url = page.url;
         const found = EnvMatch.lookup(url);
         if (found.kind === 'prod') throw new Error('운영 환경의 화면은 분석하지 않아요.');
@@ -188,7 +229,7 @@
           project: e.project, environment: EnvMatch.ENV_LABEL[e.type], accounts: e.accounts.map((a) => ({ id: a.id, memo: a.memo })),
         })) : null;
         const q = (question || "").trim() || "이 화면이 어떤 화면인지, 여기서 무엇을 할 수 있는지 알려줘.";
-        box.innerHTML = `<div class="bubble thinking">🤖 생각 중…</div>`;
+        box.innerHTML = '<div class="bubble thinking" role="status">답변을 준비하고 있어요…</div>';
         const aiQuestion = taskContext.continuation ? `원래 요청: ${q}\n앞 단계 실행 후의 현재 화면이다. 원래 요청이 완료됐는지 보이는 근거로 확인하고, 남은 일이 있으면 현재 화면에서 할 다음 동작만 제안하라. 입력 문자열은 원래 요청에서만 가져오고 이전 단계의 id는 재사용하지 마라. 완료 여부가 불명확하면 확인되지 않았다고 답하라.` : q;
         const res = await EnvGemini.answer(aiQuestion, page, env, shot, {
           history: requestHistory, signal: controller?.signal,
@@ -201,6 +242,7 @@
         });
         if (controller?.signal.aborted) throw new DOMException('중지', 'AbortError');
         remember('model', res.answer);
+        if (taskContext.card) { taskContext.card.querySelector('.task-state').textContent = '결과'; taskContext.card.classList.add('is-result'); }
         // 대신 실행해 달라는 요청: 계획을 보여주고 확인을 받는다 (확인 없이는 실행하지 않는다)
         if (act && res.actions && res.actions.length && !wantsAction(q)) {
           // 방법만 물은 경우: 실행하지 않고 안내(화면 표시)로 바꾼다
@@ -215,7 +257,7 @@
             const grouped = new Map();
             vetted.steps.forEach((s) => grouped.set(s.a.id, [...(grouped.get(s.a.id) || []), s.short]));
             if (highlight) { try { await highlight([...grouped.keys()], [...grouped.values()].map((l) => l.join(" → ")), page); } catch { /* 표시 실패는 무시 */ } }
-            box.innerHTML = planHtml(res.answer, vetted.steps, url, shot, page, q);
+            showPlan(box, res.answer, vetted.steps, url, shot, page, q, taskContext);
             return;
           }
           // 직접 해야 하는 동작이 섞여 있으면 실행하지 않고, 해당 위치를 표시해서 안내한다
@@ -237,16 +279,18 @@
             try { const r = await highlight(ids, labels, page); if (r && r.shown) { shown = ids; hlLabels.set(ids.join(","), {labels,page}); } } catch { shown = []; }
           }
         }
-        box.innerHTML = (shot ? `<div class="shot-wrap"><img class="shot" src="${shot}" alt="분석한 화면"><span class="muted">분석에 사용한 화면</span></div>` : "") +
-          `<div class="bubble answer">${fmt(res.answer)}</div><div class="hl-actions"><button type="button" data-copy-answer>답변 복사</button></div>` +
+        box.innerHTML = `<div class="bubble answer">${fmt(res.answer)}</div>` + COPY_BUTTON +
           (res.browserAction !== "none" && browserNav ? `<div class="hl-actions"><button type="button" class="go" data-nav="${res.browserAction}">${NAV_LABEL[res.browserAction]}</button><span class="muted">눌러야 이동해요</span></div>` : "") +
-          (shown.length ? `<div class="hl-actions"><span class="muted">📍 화면에 표시했어요${guessed ? " (답변 내용으로 찾았어요)" : ""}</span>
+          (shown.length ? `<div class="hl-actions"><span class="muted">화면에 표시했어요</span>
             <button type="button" data-hl="${shown.join(",")}">다시 표시</button>
             <button type="button" data-hl-clear>표시 끄기</button></div>`
             : res.highlights.length ? `<div class="hl-actions"><span class="muted">⚠️ 안내한 항목이 지금 화면에 보이지 않아 표시하지 못했어요. 접힌 메뉴 안에 있거나 화면이 바뀌었을 수 있어요.</span></div>` : "") +
-          `<div class="foot muted">읽은 항목: 메뉴 ${page.nav.length}${(page.hiddenNav || []).length ? " (+접힌 메뉴 " + page.hiddenNav.length + ")" : ""} · 링크 ${(page.links || []).length} · 입력칸 ${page.forms.reduce((n, f) => n + f.fields.length, 0)} · 버튼 ${(page.buttons || []).length}${shot ? " · 스크린샷 포함" : ""}</div>`;
+          `<details class="answer-details"><summary>참고한 화면</summary><div class="source-title">${esc(page.title || page.url)}</div>${shot ? `<img class="shot" src="${shot}" alt="답변에 참고한 화면">` : ''}<div class="muted">메뉴 ${page.nav.length} · 입력칸 ${page.forms.reduce((n, f) => n + f.fields.length, 0)} · 버튼 ${(page.buttons || []).length}</div></details>`;
       } catch (e) {
-        box.innerHTML = (e.name === 'AbortError' || controller?.signal.aborted) ? '<div class="bubble">답변을 중지했어요.</div>' : `<div class="bubble err">⚠️ 분석에 실패했어요: ${esc(e.message)}<br><button type="button" data-retry>다시 시도</button></div>`;
+        const stopped = e.name === 'AbortError' || controller?.signal.aborted;
+        box.innerHTML = stopped ? '<div class="bubble">답변을 중지했어요.</div>' : `<div class="bubble err">${esc(e.message)}<div><button type="button" data-retry>다시 시도</button></div></div>`;
+        if (taskContext.card) taskContext.card.querySelector('.task-state').textContent = stopped ? '중지됨' : '다시 확인';
+        if (!stopped) retryRequests.set(box.querySelector('[data-retry]'), {text:question,context:{...taskContext,retryAnalysis:true,selectionOnly,retryBox:box}});
       }
     }
 
@@ -265,6 +309,7 @@
 
     const scroll = () => { feed.scrollTop = feed.scrollHeight; };
     const addUser = (text) => {
+      feed.querySelector('.welcome')?.remove(); feed.classList.remove('is-empty');
       const m = document.createElement("div");
       m.className = "msg user";
       m.innerHTML = `<div class="bubble">${esc(text)}</div>`;
@@ -273,38 +318,29 @@
     const addBot = () => {
       const m = document.createElement("div");
       m.className = "msg bot";
-      m.innerHTML = `<img class="mini" src="../icons/icon32.png" alt=""><div class="body"></div>`;
+      m.innerHTML = '<div class="body"></div>';
       feed.appendChild(m);
       return m.querySelector(".body");
     };
 
     function greet() {
-      addBot().innerHTML = manual
-        ? `<div class="bubble">안녕하세요! 👋<br>개발·시험 환경의 URL과 로그인 계정을 찾아드려요.<br>
-            아래 버튼을 누르거나 <code>/</code>로 시작하는 명령을 입력해 보세요.<br>
-            <span class="muted">지금 열린 화면을 설명하는 <b>화면 분석</b>은 확장 프로그램에서 쓸 수 있어요.</span></div>`
-        : `<div class="bubble">안녕하세요! 👋 <b>화면 길잡이</b>예요.<br>
-            지금 보는 화면이 뭔지, 원하는 작업은 어디로 가야 하는지, 어떤 계정을 쓰면 되는지 알려드려요.<br>
-            <b>그냥 물어보세요.</b> 지금 열린 화면을 보고 답하고, 눌러야 할 곳을 화면에 표시해 드려요.<br>
-            <span class="muted">예) "쇼핑 접속하고 싶어" · "이 화면 뭐야?" · "주문 조회하려면 어디로 가?"</span><br>
-            <span class="muted">등록된 환경·계정은 아래 버튼으로 볼 수 있어요. (말로 묻기는 <code>/설정</code>에서 Gemini 키가 필요해요)</span></div>`;
+      const welcome = document.createElement('section'); welcome.className = 'welcome';
+      welcome.innerHTML = '<div class="welcome-mark" aria-hidden="true">✦</div>' +
+        `<h2>${manual ? '필요한 환경을<br>빠르게 찾아보세요.' : '지금 보고 있는 화면,<br>함께 살펴볼까요?'}</h2>` +
+        `<p>${manual ? '개발·시험 환경과 계정을 안내합니다.<br>화면 분석은 크롬 확장에서 사용할 수 있어요.' : '궁금한 것을 묻거나,<br>하고 싶은 일을 편하게 말해 주세요.'}</p>`;
+      welcome.appendChild(chips); feed.appendChild(welcome); feed.classList.add('is-empty');
     }
 
     const find = (word) => COMMANDS.find((c) => c.name === word || c.alias.includes(word.toLowerCase()));
 
     // 명령 실행 (caption이 있으면 AI가 이해한 내용을 위에 표시)
-    async function dispatch(cmd, args, caption) {
+    async function dispatch(cmd, args, utilityMode = false) {
       if (cmd.silent) { cmd.run(); return; }
-      const body = addBot();
-      let target = body;
-      if (caption) {
-        body.innerHTML = `<div class="ai-note">🤖 ${esc(caption)}</div><div class="ai-res"></div>`;
-        target = body.querySelector(".ai-res");
-      }
-      await cmd.run(target, args);
+      const body = utilityMode ? utility.querySelector('.utility-body') : addBot();
+      if (utilityMode) { utility.querySelector('h2').textContent = cmd.name; body.replaceChildren(); if (!utility.open) utility.showModal(); }
+      await cmd.run(body, args);
       // 결과가 길 때 응답의 시작 부분이 보이도록 스크롤
-      body.parentElement.scrollIntoView({ block: "start", behavior: "smooth" });
-      input.focus({ preventScroll: true });   // 바로 다음 질문을 입력할 수 있게
+      if (!utilityMode) { body.parentElement.scrollIntoView({ block: "start", behavior: "smooth" }); input.focus({ preventScroll: true }); }
     }
 
     // 자연어 처리: 기본은 "현재 화면 분석". 등록된 환경·계정 조회처럼 보일 때만 Gemini로 명령을 분류한다.
@@ -315,8 +351,7 @@
 
     async function natural(text) {
       if (!EnvGemini.getKey()) {
-        addBot().innerHTML = `<div class="bubble">말로 묻으려면 Gemini 키가 필요해요. <code>/설정</code>에서 입력해 주세요.<br>
-          키 없이는 <code>/</code>로 시작하는 명령을 쓸 수 있어요. (<code>/도움말</code>)</div>`;
+        addBot().innerHTML = '<div class="bubble">AI를 연결하면 이 화면에 대해 물어볼 수 있어요.<div><button type="button" data-open-settings>AI 연결 설정</button></div></div>';
         return;
       }
       const analysis = find("분석");
@@ -324,7 +359,7 @@
       if (!looksLikeLookup(text) || !getPage) { await dispatch(analysis, text); return; }
 
       const box = addBot();
-      box.innerHTML = `<div class="bubble thinking">🤖 생각 중…</div>`;
+      box.innerHTML = '<div class="bubble thinking" role="status">답변을 준비하고 있어요…</div>';
       try {
         const r = await EnvGemini.translate(text, aiCtx(), {signal: controller?.signal});
         if (controller?.signal.aborted) throw new DOMException('중지', 'AbortError');
@@ -332,7 +367,7 @@
         const cmd = find(r.command) || analysis;           // 알 수 없으면 분석이 기본
         // Classification may choose a command, but cannot rewrite action intent or input text.
         const args = cmd === analysis ? text : (r.args || "").trim();
-        await dispatch(cmd, args, `/${cmd.name}${args ? " " + args : ""} (으)로 이해했어요`);
+        await dispatch(cmd, args);
       } catch (e) {
         box.innerHTML = e.name === "AbortError" ? '<div class="bubble">답변을 중지했어요.</div>' : `<div class="bubble err">⚠️ Gemini 호출에 실패했어요: ${esc(e.message)}<br>
           <code>/진단</code>이나 <code>/설정</code>에서 키와 모델 이름을 확인해 보세요.</div>`;
@@ -343,17 +378,16 @@
       const t = text.trim();
       if (!t) return;
       if (controller || actionBusy) return;
-      lastRequest = t; lastTaskContext = taskContext;
       requestHistory = session.messages();
       controller = new AbortController();
-      toolbar.querySelector('[data-stop]').hidden = false;
+      stopButton.hidden = false;
       toolbar.querySelector('[data-new]').disabled = true;
-      const send = form.querySelector('[type=submit]'); send.disabled = true;
+      const send = form.querySelector('[type=submit]'); send.disabled = true; send.hidden = true;
       input.disabled = true;
       try {
-      addUser(taskContext.continuation ? '결과 확인 · 다음 단계: ' + t : t);
-      remember('user', t);
-      if (taskContext.continuation) { const box = addBot(); await analyze(box, t, false, taskContext); box.parentElement.scrollIntoView({block:'start',behavior:'smooth'}); return; }
+      const utilityRequest = taskContext.utility || /^\/(설정|도움말|진단)(\s|$)/.test(t);
+      if (!taskContext.continuation && !taskContext.retryAnalysis && !utilityRequest) { addUser(taskContext.label || t); remember('user', taskContext.label || t); }
+      if (taskContext.continuation || taskContext.retryAnalysis) { const box = taskContext.card ? taskContext.card.querySelector('.task-current') : taskContext.retryBox || addBot(); await analyze(box, t, !!taskContext.selectionOnly, taskContext); return; }
       if (!t.startsWith("/")) { await natural(t); return; }
       const [word, ...rest] = t.slice(1).split(/\s+/);
       const cmd = find(word);
@@ -361,25 +395,23 @@
         addBot().innerHTML = `<div class="bubble">알 수 없는 명령이에요: <code>/${esc(word)}</code><br><code>/도움말</code>을 입력해 보세요.</div>`;
         scroll(); return;
       }
-      await dispatch(cmd, rest.join(" "));
+      await dispatch(cmd, rest.join(" "), utilityRequest);
       } catch (e) { addBot().textContent = e.name === 'AbortError' ? '중지했어요.' : '요청 처리 실패: ' + e.message; }
       finally {
-        controller = null; toolbar.querySelector('[data-stop]').hidden = true; toolbar.querySelector('[data-new]').disabled = false;
-        send.disabled = false; input.disabled = false; input.focus({preventScroll:true});
+        controller = null; stopButton.hidden = true; toolbar.querySelector('[data-new]').disabled = false;
+        send.disabled = false; send.hidden = false; input.disabled = false; if (!utility.open) input.focus({preventScroll:true});
       }
     }
 
     // 퀵 메뉴 버튼
-    const CHIP_ORDER = ["요약", "선택", "번역", "분석", "로그인", "환경", "설정", "진단", "도움말"];
-    chips.innerHTML = COMMANDS.filter((c) => c.name !== "지우기" && c.name !== "분석")
-      .sort((a, b) => CHIP_ORDER.indexOf(a.name) - CHIP_ORDER.indexOf(b.name))
-      .map((c) => `<button type="button" data-cmd="${esc(c.name)}">${c.icon} ${esc(c.name)}</button>`).join("");
+    chips.innerHTML = (manual ? [['로그인','사이트 계정 찾기'],['환경','등록된 환경 둘러보기'],['도움말','사용 방법 알아보기']] : [['요약','이 페이지 요약하기'],['선택','선택한 글 설명하기'],['번역','한국어로 번역하기']])
+      .map(([name,label]) => `<button type="button" data-suggest="${name}"><span>${label}</span><span aria-hidden="true">↗</span></button>`).join('');
     chips.addEventListener("click", (ev) => {
-      const b = ev.target.closest("[data-cmd]");
+      const b = ev.target.closest("[data-suggest]");
       if (!b) return;
-      const cmd = find(b.dataset.cmd);
+      const cmd = find(b.dataset.suggest);
       if (cmd.arg && !cmd.argOptional) { input.value = "/" + cmd.name + " "; input.focus(); updateMenu(); }
-      else execute("/" + cmd.name);
+      else execute("/" + cmd.name, {label:toolLabel(cmd.name)});
     });
 
     // 스크린샷 확대: 썸네일을 누르면 패널 위에 크게 보여준다 (이미지를 누르면 원본 크기 ↔ 맞춤, 바깥·Esc·닫기로 닫기)
@@ -398,9 +430,10 @@
     }
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeLightbox(); });
 
-    feed.addEventListener("click", async (ev) => {
-      if (ev.target.closest('[data-copy-answer]')) { const button=ev.target.closest('[data-copy-answer]'); try { await navigator.clipboard.writeText(button.closest('.body').querySelector('.answer').innerText); button.textContent='복사됨'; } catch { button.textContent='복사 권한을 확인해 주세요'; } return; }
-      if (ev.target.closest('[data-retry]')) { execute(lastRequest, lastTaskContext); return; }
+    document.addEventListener("click", async (ev) => {
+      if (ev.target.closest('[data-open-settings]')) { execute('/설정', {utility:true}); return; }
+      if (ev.target.closest('[data-copy-answer]')) { const button=ev.target.closest('[data-copy-answer]'); try { await navigator.clipboard.writeText(button.closest('.answer-actions').previousElementSibling.innerText); button.setAttribute('aria-label','복사됨'); button.title='복사됨'; } catch { button.title='복사 권한을 확인해 주세요'; } return; }
+      if (ev.target.closest('[data-retry]')) { const retry=retryRequests.get(ev.target.closest('[data-retry]')); if(retry) execute(retry.text, retry.context); return; }
       const shotImg = ev.target.closest("img.shot");
       if (shotImg) { openLightbox(shotImg.src); return; }
       const next = ev.target.closest('[data-plan-next]');
@@ -408,8 +441,8 @@
         const p = plans.get(+next.dataset.planNext);
         if (!p || controller || actionBusy) return;
         next.disabled = true;
-        try { await execute(p.task, { continuation:true, expected:{tabId:p.context.tabId} }); }
-        finally { next.disabled = false; }
+        archiveStep(p); p.card.querySelector('.task-state').textContent = '확인 중';
+        await execute(p.task, { continuation:true, expected:{tabId:p.context.tabId}, card:p.card });
         return;
       }
       const pr = ev.target.closest("[data-plan-run]");
@@ -419,14 +452,19 @@
         if (!p) return;
         actionBusy = true; input.disabled = true;
         toolbar.querySelector('[data-new]').disabled = true;
+        p.card.querySelector('.task-state').textContent = '실행 중';
         card.querySelectorAll("button").forEach((b) => (b.disabled = true));
         out.textContent = "실행 중…";
         try {
           const results = await act(p.actions, p.url, p.context);
-          out.innerHTML = results.map((r, i) => `${r.ok ? "✅" : "⚠️"} ${i + 1}. ${esc(r.note)}`).join("<br>") +
-            `<div class="hl-actions"><button type="button" data-plan-next="${pr.dataset.planRun}">결과 확인 · 다음 단계</button></div>`;
+          p.results = results; card.classList.add('executed');
+          const uncertain = results.some(r => !r.ok);
+          p.card.querySelector('.task-state').textContent = uncertain ? '확인 필요' : '결과 확인 필요';
+          out.innerHTML = `<p>${uncertain ? '완료 여부를 확인하지 못했어요. 현재 화면을 확인해 주세요.' : '동작을 실행했어요. 화면에서 결과를 확인할까요?'}</p>` +
+            `<button type="button" class="primary" data-plan-next="${pr.dataset.planRun}">결과 확인 · 다음 단계</button>` +
+            `<details class="execution-details"><summary>실행 내역</summary>${results.map(r => `<p>${r.ok ? '' : '확인 필요: '}${esc(r.note)}</p>`).join('')}</details>`;
           remember('model', '실행 결과: ' + results.map(r => r.note).join(' / '));
-        } catch (e) { out.textContent = "⚠️ 실행하지 못했어요: " + e.message; }
+        } catch (e) { out.textContent = "실행하지 못했어요: " + e.message; p.card.querySelector('.task-state').textContent = '실행 안 됨'; }
         actionBusy = false; input.disabled = false;
         toolbar.querySelector('[data-new]').disabled = false;
         if (unhighlight) { try { await unhighlight({tabId:p.context.tabId}); } catch { /* 페이지가 이동한 경우 */ } }
@@ -435,9 +473,11 @@
       }
       const pc = ev.target.closest("[data-plan-cancel]");
       if (pc) {
+        if (controller || actionBusy) return;
         const card = pc.closest(".plan");
         card.querySelectorAll("button").forEach((b) => (b.disabled = true));
         card.querySelector(".plan-result").textContent = "취소했어요.";
+        card.classList.add('executed'); card.closest('.task-card').querySelector('.task-state').textContent = '취소됨';
         if (unhighlight) { try { await unhighlight(); } catch { /* 무시 */ } }
         return;
       }
@@ -457,7 +497,7 @@
         return;
       }
       const b = ev.target.closest("[data-run]");
-      if (b) execute(b.dataset.run);
+      if (b) execute(b.dataset.run, {utility:utility.contains(b)});
     });
 
     // 슬래시 자동완성
@@ -485,35 +525,39 @@
       const it = ev.target.closest("[data-i]");
       if (it) { ev.preventDefault(); pick(items[+it.dataset.i], false); }
     });
-    input.addEventListener("input", () => { active = 0; updateMenu(); });
+    const resizeInput = () => { input.style.height='auto'; input.style.height=Math.min(input.scrollHeight,180)+'px'; };
+    input.addEventListener("input", () => { active = 0; updateMenu(); resizeInput(); });
     input.addEventListener("keydown", (ev) => {
-      if (ev.isComposing) return;               // 한글 조합 중 Enter 무시
+      if (ev.isComposing || ev.keyCode === 229) return;
+      if (ev.key === 'Enter' && ev.shiftKey) return;
       const open = !menu.classList.contains("hidden");
       if (open && ev.key === "ArrowDown") { ev.preventDefault(); active = (active + 1) % items.length; updateMenu(); }
       else if (open && ev.key === "ArrowUp") { ev.preventDefault(); active = (active - 1 + items.length) % items.length; updateMenu(); }
       else if (open && (ev.key === "Tab" || ev.key === "Enter")) {
         // 이미 명령 전체를 입력했으면 그대로 실행, 아니면 선택 항목으로 완성
         const exact = items.find((c) => input.value.slice(1) === c.name || c.alias.includes(input.value.slice(1).toLowerCase()));
-        if (ev.key === "Enter" && exact) return;   // form submit으로 실행
+        if (ev.key === "Enter" && exact) { ev.preventDefault(); form.requestSubmit(); return; }
         ev.preventDefault(); pick(items[active], ev.key === "Tab");
       } else if (open && ev.key === "Escape") menu.classList.add("hidden");
+      if (ev.key === 'Enter' && !ev.defaultPrevented) { ev.preventDefault(); form.requestSubmit(); }
     });
     form.addEventListener("submit", (ev) => {
       ev.preventDefault();
+      if (controller || actionBusy) return;
       const v = input.value;
-      input.value = ""; menu.classList.add("hidden");
+      input.value = ""; resizeInput(); menu.classList.add("hidden");
       execute(v);
     });
 
     const restored = session.messages();
-    greet();
+    if (!restored.length) greet();
     for (const turn of restored) {
       if (turn.role === 'user') addUser(turn.text);
-      else addBot().innerHTML = `<div class="bubble answer">${fmt(turn.text)}</div>`;
+      else addBot().innerHTML = `<div class="bubble answer">${fmt(turn.text)}</div>` + COPY_BUTTON;
     }
     if (restored.length) addBot().innerHTML = '<div class="muted">이전 대화를 복원했어요. 실행 계획은 다시 요청해 주세요.</div>';
     saveState();
-    input.focus();
+    resizeInput(); input.focus();
   }
 
   // 헤더의 "현재 사이트" 상태 표시 (탭이 바뀔 때마다 갱신)

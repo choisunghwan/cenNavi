@@ -4,7 +4,7 @@ const http=require('node:http'), fs=require('node:fs'), path=require('node:path'
 const assert=require('node:assert/strict');
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 (async()=>{
- const root=process.cwd();let mode='summary',rewrite=false;const requests=[];
+ const root=process.cwd();let mode='paused',rewrite=false,finishStream;const requests=[];
  const event=(text,finishReason)=>'data: '+JSON.stringify({candidates:[{content:{parts:[{text}]},...(finishReason?{finishReason}:{})}]})+'\n\n';
  const server=http.createServer(async(req,res)=>{
   if(req.url.startsWith('/__test_api')) {
@@ -19,9 +19,12 @@ const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
     done:{answer:'화면에 김철수 조회 결과가 표시됩니다.',actions:[],steps:[]},
     blocked:{answer:'삭제하겠습니다.',actions:[{type:'click',id:12}],steps:[]},
    };
-   const text=JSON.stringify(outcomes[mode]||outcomes.summary),split=text.indexOf('。')>0?text.indexOf('。'):Math.min(20,text.length-1);
-   res.write(event(text.slice(0,split)));await delay(600);
-   if(mode!=='truncated')res.write(event(text.slice(split),'STOP'));
+   const requestMode=mode;
+   const text=JSON.stringify(outcomes[requestMode]||outcomes.summary),split=Math.min(20,text.length-1);
+   res.write(event(text.slice(0,split)));
+   if(requestMode==='abort') { await new Promise(resolve=>res.once('close',resolve)); return; }
+   if(requestMode==='paused') await new Promise(resolve=>{finishStream=resolve;}); else await delay(100);
+   if(requestMode!=='truncated')res.write(event(text.slice(split),'STOP'));
    res.end();return;
   }
   const file=path.resolve(root,'.'+decodeURIComponent(req.url.split('?')[0]));
@@ -34,19 +37,21 @@ const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
   const page=await browser.newPage({viewport:{width:460,height:1000}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.addInitScript(()=>{const nativeFetch=window.fetch.bind(window);window.fetch=(url,opts)=>nativeFetch(String(url).startsWith('https://generativelanguage.googleapis.com/')?'/__test_api?'+(String(url).includes(':streamGenerateContent')?'streamGenerateContent':'generateContent'):url,opts);});
   await page.goto(`http://127.0.0.1:${server.address().port}/extension/preview.html`);
+  const tool=async name=>{await page.locator('[data-menu-toggle]').click();await page.locator(`[data-cmd="${name}"]`).click();};
   await page.evaluate(()=>EnvGemini.save({key:'local-fixture-only'}));
-  await page.click('[data-cmd="요약"]');
+  await tool('요약');
   await page.waitForSelector('.streaming');
   assert.equal(await page.locator('#cmd').isDisabled(),true);
   assert.match(await page.locator('.streaming').innerText(),/실시간/);
   assert.equal(await page.locator('[data-plan-run]').count(),0);
+  finishStream();mode='summary';
   await page.waitForFunction(()=>!document.querySelector('#cmd').disabled);
   assert.match(await page.locator('#feed').innerText(),/끝까지 생성/);
   await page.click('[data-new]');
-  mode='truncated';await page.click('[data-cmd="요약"]');await page.waitForFunction(()=>!document.querySelector('#cmd').disabled);
+  mode='truncated';await tool('요약');await page.waitForFunction(()=>!document.querySelector('#cmd').disabled);
   assert.match(await page.locator('#feed').innerText(),/중단됐어요/);assert.equal(await page.locator('[data-plan-run]').count(),0);
   assert.equal(await page.evaluate(()=>EnvConversation.create('screenGuide.panel.v1').messages().filter(x=>x.role==='model').length),0);
-  await page.click('[data-new]');mode='summary';await page.click('[data-cmd="요약"]');await page.waitForSelector('.streaming');await page.click('[data-stop]');
+  await page.click('[data-new]');mode='abort';await tool('요약');await page.waitForSelector('.streaming');await page.click('[data-stop]');
   await page.waitForFunction(()=>!document.querySelector('#cmd').disabled);await page.reload();
   assert.doesNotMatch(await page.locator('#feed').innerText(),/실시간 답변/);
   await page.click('[data-new]');
@@ -67,14 +72,20 @@ const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
   await page.click('[data-plan-next]');await page.waitForFunction(()=>!document.querySelector('#cmd').disabled);
   assert.match(await page.locator('#feed').innerText(),/작업하던 탭/);assert.equal(requests.length,before);
   await page.evaluate(()=>{chrome.tabs.query=originalQuery;const select=document.querySelector('#fakeTab');select.value='https://order-test.company.example/login';select.dispatchEvent(new Event('change'));});
-  mode='second';await page.click('[data-plan-next]');await page.waitForFunction(()=>!document.querySelector('#cmd').disabled);
+  mode='second';await page.click('[data-retry]');await page.waitForFunction(()=>!document.querySelector('#cmd').disabled);
   assert.equal(await page.evaluate(()=>testActions),1);
   assert.match(requests.at(-1).contents.at(-1).parts[0].text,/원래 요청: 김철수 검색해줘/);
   assert.equal(await page.locator('[data-plan-run]:enabled').count(),1);
+  assert.equal(await page.locator('.task-card').count(),1);
+  assert.equal(await page.locator('.msg.user').count(),1);
+  assert.equal(await page.locator('.task-history[open]').count(),0);
+  assert.equal(await page.locator('.task-history .history-step').count(),1);
   await page.locator('[data-plan-run]:enabled').click();await page.waitForFunction(()=>window.testActions===2);
-  await page.waitForFunction(()=>document.querySelectorAll('[data-plan-next]').length===2);
+  await page.waitForFunction(()=>document.querySelectorAll('[data-plan-next]').length===1);
   mode='done';await page.locator('[data-plan-next]').last().click();await page.waitForFunction(()=>!document.querySelector('#cmd').disabled);
   assert.match(await page.locator('#feed').innerText(),/조회 결과가 표시/);assert.equal(await page.evaluate(()=>testActions),2);
+  assert.equal(await page.locator('.task-card').count(),1);assert.equal(await page.locator('.msg.user').count(),1);
+  assert.equal(await page.locator('.task-history .history-step').count(),2);
   mode='blocked';await ask('삭제 버튼 눌러줘');assert.equal(await page.locator('[data-plan-run]:enabled').count(),0);
   assert.match(await page.locator('#feed').innerText(),/직접 해야 하는 동작/);
   await page.click('[data-new]');rewrite=true;mode='first';
@@ -86,7 +97,7 @@ const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
   assert.equal(await page.locator('[data-plan-run]:enabled').count(),1);
   await page.evaluate(()=>{const feed=document.querySelector('#feed');feed.style.scrollBehavior='auto';feed.scrollTop=feed.scrollHeight;});
   await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
-  await page.screenshot({path:'docs/screenshots/07-task-continuation.png',fullPage:true});
+  await page.screenshot({path:'docs/screenshots/09-clean-task.png',fullPage:true});
   assert.deepEqual(errors,[]);
   console.log('Workflow browser checks passed: partial streaming, truncated stream, stop/reload, navigation, same-tab continuation, fresh confirmation, blocked action.');
  } finally {await browser?.close();await new Promise(r=>server.close(r));}

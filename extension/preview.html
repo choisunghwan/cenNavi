@@ -8,9 +8,9 @@
 <style>
   /* 브라우저에서 단독으로 열어볼 때만 쓰는 미리보기 틀 (확장 프로그램에는 사용되지 않음) */
   html, body { height: 100%; }
-  body.chat { background: #cfd6e4; align-items: center; justify-content: flex-start; padding: 16px; gap: 10px; }
-  .sim { width: 400px; max-width: 100%; font-size: 12px; color: #333; }
-  .sim select { width: 100%; margin-top: 4px; padding: 6px; border-radius: 8px; border: 1px solid #aab; }
+  body.chat { background: var(--soft); align-items: center; justify-content: flex-start; padding: 16px; gap: 10px; }
+  .sim { width: 400px; max-width: 100%; font-size: 11px; color: var(--muted); }
+  .sim select { width: 100%; margin-top: 4px; padding: 6px; border-radius: 8px; border: 1px solid var(--line); background:var(--surface); color:var(--fg); }
   .frame { width: 400px; max-width: 100%; flex: 1; min-height: 0; display: flex; flex-direction: column;
            background: var(--bg); border-radius: 14px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,.2); }
 </style>
@@ -29,18 +29,17 @@
 
 <div class="frame">
   <header class="chat-head">
-    <h1><img class="logo" src="../icons/icon32.png" alt="">화면 길잡이</h1>
+    <div class="head-row"><h1><img class="logo" src="../icons/icon32.png" alt="">화면 길잡이</h1><div class="head-actions"><button type="button" class="icon-button" data-new aria-label="새 대화" title="새 대화">＋</button><button type="button" class="icon-button" data-menu-toggle aria-label="도구와 설정" aria-expanded="false" aria-controls="assistantMenu" title="도구와 설정">⋯</button></div></div>
     <div id="status" class="status none"></div>
   </header>
   <main id="feed" class="feed"></main>
   <footer class="composer">
     <div id="slashMenu" class="slash hidden"></div>
-    <div id="chips" class="chips"></div>
     <form id="form" autocomplete="off">
-      <span class="prompt">/</span>
-      <input id="cmd" type="text" spellcheck="false" placeholder="이 화면에서 뭘 하고 싶으세요? (예: 쇼핑 접속하고 싶어)">
-      <button type="submit" class="send" title="실행">↵</button>
+      <textarea id="cmd" rows="2" spellcheck="false" aria-label="메시지" placeholder="무엇을 도와드릴까요?"></textarea>
+      <div class="composer-bottom"><span class="composer-context">현재 페이지와 함께</span><button type="submit" class="send" title="메시지 전송" aria-label="메시지 전송">↑</button><button type="button" class="send stop" data-stop title="답변 중지" aria-label="답변 중지" hidden>■</button></div>
     </form>
+    <div class="composer-hint">Enter 전송 <span>·</span> Shift+Enter 줄바꿈</div>
   </footer>
 </div>
 <div id="toast" class="toast">복사됨</div>
