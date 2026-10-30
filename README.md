@@ -4,7 +4,7 @@
 
 Chrome 사이드 패널에서 질문하고, 화면의 안내 표시와 실행 계획을 확인합니다. 개발·시험 환경의 URL과 계정 ID도 찾아볼 수 있습니다.
 
-현재 버전 **0.8.1** · Chrome **114 이상** · Manifest V3 · Gemini API
+현재 버전 **0.8.2** · Chrome **114 이상** · Manifest V3 · Gemini API
 
 ## 화면
 
@@ -111,7 +111,7 @@ Chrome 사이드 패널에서 질문하고, 화면의 안내 표시와 실행 �
 - `<all_urls>` 사이트 접근 권한을 사용합니다. 화면 읽기와 캡처는 분석 요청 시 수행하며, 환경 배지는 탭 이동에 따라 갱신됩니다.
 - 이름이 CenNavi로 바뀌어도 기존 저장소 키는 유지하므로 같은 설치의 API 설정과 대화 기록을 이어서 사용합니다.
 
-환경과 계정 샘플은 `shared/sample-pack.js`에서 수정합니다. 계정은 모두 가상의 예시이며, 비밀번호는 등록하지 않습니다. `shared/local-config.js`는 선택적인 로컬 설정 파일로 Git에서 제외됩니다. 파일을 공유할 때 키가 포함된 로컬 설정은 제외하세요.
+환경과 계정 샘플은 `shared/sample-pack.js`에서 수정한 뒤 `npm run build`로 백그라운드 실행 파일을 다시 생성합니다. 계정은 모두 가상의 예시이며, 비밀번호는 등록하지 않습니다. `shared/local-config.js`는 선택적인 로컬 설정 파일로 Git에서 제외됩니다. 파일을 공유할 때 키가 포함된 로컬 설정은 제외하세요.
 
 ## 연습 사이트와 미리보기
 
@@ -138,7 +138,7 @@ python -m http.server 8099 --bind 127.0.0.1
 |---|---|
 | 확장 관리에 빨간 **오류** 버튼 표시 | 상세 메시지를 확인하세요. 이전 오류 기록도 남아 있을 수 있습니다. 업데이트 후 새로고침하고 기존 기록을 지운 다음, 같은 오류가 새로 발생하는지 확인합니다. |
 | `No tab with id` | 0.8.1에서 탭 종료 직후의 조회·배지 갱신 실패를 처리하도록 수정했습니다. 이전 버전이면 새로고침해 업데이트하세요. |
-| `sample-pack.js` 로딩 실패 | 프로젝트 전체 폴더를 로드했는지, `shared/sample-pack.js`와 `shared/match.js`가 존재하는지 확인합니다. 이 파일들은 배포 소스에 포함됩니다. |
+| 백그라운드의 `importScripts`·`sample-pack.js` 로딩 실패 | 0.8.2에서 서비스 워커를 단일 실행 파일로 변경해 런타임 공유 스크립트 로딩을 제거했습니다. 업데이트 후 **↻ 새로고침**하고 버전이 0.8.2인지 확인하세요. 새 워커 경로는 `extension/background.bundle.js`입니다. |
 | 화면을 읽지 못함 | 일반 HTTP/HTTPS 페이지에서 **⋯ → 진단**을 실행하고 사이트 접근 권한을 확인합니다. |
 | 답변 실패 | API 키·모델·Gemini 오류 메시지를 확인합니다. 분석 요청은 60초 뒤 시간 초과로 종료됩니다. |
 | 탭이 바뀌었다는 메시지 | 작업하던 탭으로 돌아와 로딩이 끝난 뒤 다시 확인합니다. 다른 탭에서는 기존 계획을 실행하지 않습니다. |
@@ -149,13 +149,16 @@ python -m http.server 8099 --bind 127.0.0.1
 |---|---|
 | `manifest.json` | 확장 설정·권한·버전 |
 | `extension/` | 사이드 패널, 배지 서비스 워커, 페이지 읽기·표시·동작 실행 |
+| `extension/background.js` → `background.bundle.js` | 편집용 워커 소스 → 환경 데이터·매칭 코드까지 포함한 실제 실행 파일 |
+| `scripts/build-background.cjs` | 외부 라이브러리 없이 단일 워커 파일 생성·최신 상태 검사 |
 | `shared/` | 대화 UI·기록, Gemini 호출·스트리밍, 환경 매칭·샘플 데이터, 스타일 |
 | `web/` · `demo-site/` | 웹 조회 화면·연습 사이트 |
 | `tests/` | 단위 테스트·로컬 UI 테스트·확장 로딩 검사 |
 
-단위 테스트는 Node.js 내장 테스트 러너를 사용합니다.
+배포 소스에는 생성된 실행 파일이 포함됩니다. `shared/sample-pack.js`, `shared/match.js`, `extension/background.js`를 수정했다면 먼저 다시 빌드하세요. 단위 테스트는 실행 파일의 최신 상태를 검사하고 Node.js 내장 테스트 러너를 사용합니다.
 
 ```powershell
+npm run build
 npm test
 ```
 
@@ -166,7 +169,7 @@ npm test
 $env:PLAYWRIGHT_PATH = "Playwright 패키지의 절대 경로"
 npm run test:browser
 
-# Chromium의 별도 임시 프로필에서 실제 확장 로딩·탭 종료 검사
+# Chromium의 별도 임시 프로필에서 실제 확장 로딩·탭 종료·같은 프로필 재시작 검사
 # 필요하면 실행 파일 경로 지정
 $env:CENNAVI_CHROMIUM_PATH = "Chromium 실행 파일의 절대 경로"
 npm run test:extension

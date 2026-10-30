@@ -4,13 +4,16 @@ const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),asse
 (async()=>{
  const root=process.cwd(),tempRoot=path.resolve(os.tmpdir());
  const profile=fs.mkdtempSync(path.join(tempRoot,'cennavi-background-'));
+ const manifest=JSON.parse(fs.readFileSync(path.join(root,'manifest.json'),'utf8'));
+ const launch=()=>chromium.launchPersistentContext(profile,{headless:true,
+  ...(process.env.CENNAVI_CHROMIUM_PATH?{executablePath:process.env.CENNAVI_CHROMIUM_PATH}:{}),
+  args:[`--disable-extensions-except=${root}`,`--load-extension=${root}`]});
  let context;
  try {
-  context=await chromium.launchPersistentContext(profile,{headless:true,
-   ...(process.env.CENNAVI_CHROMIUM_PATH?{executablePath:process.env.CENNAVI_CHROMIUM_PATH}:{}),
-   args:[`--disable-extensions-except=${root}`,`--load-extension=${root}`]});
+  context=await launch();
   await context.route('https://**/*',route=>route.abort());
   const worker=context.serviceWorkers()[0]||await context.waitForEvent('serviceworker',{timeout:15000});
+  assert.equal(new URL(worker.url()).pathname,'/'+manifest.background.service_worker);
   const startup=await worker.evaluate(()=>({name:chrome.runtime.getManifest().name,version:chrome.runtime.getManifest().version,
    loaded:!!(self.ENV_PACKS&&self.EnvMatch),kind:self.EnvMatch?.lookup('http://localhost:8080').kind}));
   assert.equal(startup.name,'CenNavi');assert.equal(startup.loaded,true);assert.equal(startup.kind,'env');
@@ -22,7 +25,15 @@ const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),asse
   for(let i=0;i<12;i++){const tab=await context.newPage();await tab.close();}
   const failures=await worker.evaluate(async()=>{await new Promise(resolve=>setTimeout(resolve,200));return self.__testErrors;});
   assert.deepEqual(failures,[]);assert.deepEqual(errors,[]);
-  console.log(`Extension checks passed: CenNavi ${startup.version}, real worker imports, panel startup, 12 tab closures without unhandled errors.`);
+  await context.close();context=undefined;
+  context=await launch();await context.route('https://**/*',route=>route.abort());
+  const resumed=context.serviceWorkers()[0]||await context.waitForEvent('serviceworker',{timeout:15000});
+  assert.equal(new URL(resumed.url()).pathname,'/'+manifest.background.service_worker);
+  const warm=await resumed.evaluate(()=>({dev:self.EnvMatch.lookup('http://localhost:8080').kind,prod:self.EnvMatch.lookup('https://order.company.example').kind}));
+  assert.deepEqual(warm,{dev:'env',prod:'prod'});
+  const reopened=await context.newPage();await reopened.goto(`chrome-extension://${id}/extension/sidepanel.html`);
+  assert.equal(await reopened.locator('h1').innerText(),'CenNavi');
+  console.log(`Extension checks passed: CenNavi ${startup.version}, single-file worker, panel startup, 12 tab closures, same-profile restart and production blocking.`);
  } finally {
   await context?.close();
   assert.equal(path.dirname(path.resolve(profile)),tempRoot);

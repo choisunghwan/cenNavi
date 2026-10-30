@@ -1,12 +1,12 @@
 {
   "manifest_version": 3,
   "name": "CenNavi",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "description": "현재 웹페이지를 이해하고, 필요한 정보를 찾고, 확인받은 입력·클릭을 수행하는 AI 브라우저 도우미",
   "minimum_chrome_version": "114",
   "permissions": ["sidePanel", "tabs", "scripting"],
   "host_permissions": ["<all_urls>"],
-  "background": { "service_worker": "extension/background.js" },
+  "background": { "service_worker": "extension/background.bundle.js" },
   "side_panel": { "default_path": "extension/sidepanel.html" },
   "icons": { "16": "icons/icon16.png", "32": "icons/icon32.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
   "action": {

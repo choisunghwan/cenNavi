@@ -1,4 +1,4 @@
-importScripts("../shared/sample-pack.js", "../shared/match.js");
+// Worker source. Embedded after the shared data/matcher by scripts/build-background.cjs.
 
 // 툴바 아이콘을 누르면 사이드 패널이 열리도록 설정
 chrome.runtime.onInstalled.addListener(async () => {

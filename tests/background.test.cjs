@@ -1,7 +1,7 @@
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
-function worker({getTab=async id=>({id,url:'http://localhost:8080'}),setBadge=async()=>{},setPanel=async()=>{}}={}) {
+function worker({getTab=async id=>({id,url:'http://localhost:8080'}),setBadge=async()=>{},setPanel=async()=>{},rejectRuntimeImports=false}={}) {
   const listeners={},errors=[],updates=[];
   const event=name=>({addListener:fn=>{listeners[name]=fn;}});
   const ctx=vm.createContext({URL,console:{error:(...args)=>errors.push(args.join(' '))},chrome:{
@@ -11,9 +11,10 @@ function worker({getTab=async id=>({id,url:'http://localhost:8080'}),setBadge=as
     action:{setBadgeText:async opts=>{updates.push(opts);await setBadge(opts);},setBadgeBackgroundColor:async()=>{},setTitle:async()=>{}},
   }});
   ctx.self=ctx;
-  ctx.importScripts=(...urls)=>{for(const url of urls){const resolved=new URL(url,'chrome-extension://test/extension/background.js');const file=path.join(process.cwd(),resolved.pathname);vm.runInContext(fs.readFileSync(file,'utf8'),ctx,{filename:resolved.pathname});}};
-  vm.runInContext(fs.readFileSync('extension/background.js','utf8'),ctx);
-  return {listeners,errors,updates};
+  ctx.importScripts=(...urls)=>{if(rejectRuntimeImports)throw new Error('Failed to execute importScripts: shared/sample-pack.js failed to load');for(const url of urls){const resolved=new URL(url,'chrome-extension://test/extension/background.js');const file=path.join(process.cwd(),resolved.pathname);vm.runInContext(fs.readFileSync(file,'utf8'),ctx,{filename:resolved.pathname});}};
+  const manifest=JSON.parse(fs.readFileSync('manifest.json','utf8'));
+  vm.runInContext(fs.readFileSync(manifest.background.service_worker,'utf8'),ctx);
+  return {listeners,errors,updates,ctx};
 }
 test('packaged background imports real environment data and updates DEV badge',async()=>{
   const {listeners,updates}=worker();await listeners.activated({tabId:7});
@@ -35,4 +36,11 @@ test('unexpected badge failures remain visible without rejecting event handler',
 test('side-panel setup rejection is handled and reported',async()=>{
   const {listeners,errors}=worker({setPanel:async()=>{throw new Error('Panel unavailable');}});
   await listeners.installed();await new Promise(resolve=>setImmediate(resolve));assert.match(errors[0],/Panel unavailable/);
+});
+test('worker starts even when runtime imports are unavailable, preserving production blocking',async()=>{
+  const {listeners,updates,ctx}=worker({rejectRuntimeImports:true});
+  await listeners.activated({tabId:9});assert.equal(updates[0].text,'DEV');
+  assert.equal(ctx.EnvMatch.lookup('https://order.company.example').kind,'prod');
+  assert.equal(ctx.EnvMatch.lookup('https://member.company.example').kind,'prod');
+  assert.ok(ctx.EnvMatch.rejected.includes('https://member.company.example'));
 });
