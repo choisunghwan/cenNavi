@@ -37,6 +37,8 @@
       { name: "요약", alias: ["summary"], icon: "✦", desc: "현재 페이지 핵심 요약", run: (box) => analyze(box, "이 페이지의 핵심 내용을 요약하고 주요 사실과 할 일을 정리해줘.", false, {readOnly:true}) },
       { name: "번역", alias: ["translate"], icon: "🌐", desc: "선택 영역 또는 페이지 한국어 번역", run: (box) => analyze(box, "선택한 내용이 있으면 선택 영역을, 없으면 페이지 본문을 한국어로 번역해줘.", false, {readOnly:true}) },
       { name: "선택", alias: ["selection"], icon: "⌁", arg: "[질문]", argOptional: true, desc: "페이지에서 선택한 글에 질문", run: (box, args) => analyze(box, args || "선택한 내용을 쉽게 설명해줘.", true, {readOnly:true}) },
+      { name: "오피스", alias: ["office"], icon: "🏢", arg: "[도구|설정]", argOptional: true, desc: "OFFICE 연결 설정과 도구 목록 (도구는 /도구이름 으로 바로 실행)",
+        run: (box, args) => typeof EnvOffice === "undefined" ? (box.innerHTML = "<div class=\"bubble\">OFFICE 연결을 불러오지 못했어요.</div>") : EnvOffice.run(box, args, { getPage: manual ? null : getPage }) },
       { name: "로그인", alias: ["login"], icon: "🔑", arg: "[주소]", argOptional: true,
         desc: manual ? "주소(또는 키워드)로 로그인 계정 보기" : "현재 사이트의 로그인 계정 보기 · 주소 지정 가능",
         run: async (box, args) => {
@@ -66,7 +68,21 @@
         run: () => { session.clear(); plans.clear(); hlLabels.clear(); feed.innerHTML = ""; greet(); saveState(); }, silent: true },
     ];
 
-    tools.innerHTML = '<div class="menu-label">페이지 도구</div>' + ['요약', '선택', '번역'].map(name => `<button type="button" data-cmd="${name}">${name}<span>↗</span></button>`).join('') +
+    // OFFICE 의 승인된 도구를 슬래시 명령으로 올린다(/cen-log-analyzer 처럼). 연결 설정이 있을 때만, 1분에 한 번만 목록을 새로 가져온다.
+    // 명령 뒤의 글은 줄바꿈을 지키려고 raw 로 넘긴다(스택 트레이스가 한 줄로 뭉개지면 안 된다).
+    let officeCmds = [], officeAt = 0;
+    async function syncOffice(force = false) {
+      if (manual || !getPage || typeof EnvOffice === "undefined" || (!force && Date.now() - officeAt < 60000)) return;
+      officeAt = Date.now();
+      const list = await EnvOffice.loadTools();
+      for (const c of officeCmds) { const i = COMMANDS.indexOf(c); if (i >= 0) COMMANDS.splice(i, 1); }
+      officeCmds = list.filter((t) => !COMMANDS.some((c) => c.name === t.name || c.alias.includes(t.name))).map((t) => ({
+        name: t.name, alias: [], icon: "🏢", arg: "[글]", argOptional: true, raw: true, desc: "OFFICE · " + (t.description || "승인된 도구"),
+        run: (box, args) => EnvOffice.runTool(box, t.name, getPage, { text: args }) }));
+      COMMANDS.push(...officeCmds);
+    }
+
+    tools.innerHTML = '<div class="menu-label">페이지 도구</div>' + ['요약', '선택', '번역', '오피스'].map(name => `<button type="button" data-cmd="${name}">${name}<span>↗</span></button>`).join('') +
       '<div class="menu-label">환경과 설정</div>' + ['로그인', '환경', '설정', '진단', '도움말'].map(name => `<button type="button" data-cmd="${name}">${name}</button>`).join('') +
       '<button type="button" data-export>대화 내보내기</button><div class="save-state"></div>';
     tools.querySelector('[data-export]').onclick = () => { closeTools(); exportConversation(); };
@@ -359,7 +375,7 @@
         addBot().innerHTML = `<div class="bubble">알 수 없는 명령이에요: <code>/${esc(word)}</code><br><code>/도움말</code>을 입력해 보세요.</div>`;
         scroll(); return;
       }
-      await dispatch(cmd, rest.join(" "), utilityRequest);
+      await dispatch(cmd, cmd.raw ? t.slice(1 + word.length).trim() : rest.join(" "), utilityRequest);
       } catch (e) { addBot().textContent = e.name === 'AbortError' ? '중지했어요.' : '요청 처리 실패: ' + e.message; }
       finally {
         controller = null; stopButton.hidden = true; toolbar.querySelector('[data-new]').disabled = false;
@@ -475,12 +491,15 @@
       items = COMMANDS.filter((c) => c.name.startsWith(q) || c.alias.some((a) => a.startsWith(q)));
       if (!items.length) { menu.classList.add("hidden"); return; }
       active = Math.min(active, items.length - 1);
+      const keepTop = menu.scrollTop; // 다시 그려도 스크롤 위치를 유지한다
       menu.innerHTML = items.map((c, i) => `
         <div class="slash-item ${i === active ? "active" : ""}" data-i="${i}">
           <span class="s-name">${c.icon} /${esc(c.name)}${c.arg ? " <i>" + esc(c.arg) + "</i>" : ""}</span>
           <span class="s-desc">${esc(c.desc)}</span>
         </div>`).join("");
       menu.classList.remove("hidden");
+      menu.scrollTop = keepTop;
+      menu.querySelector(".slash-item.active")?.scrollIntoView({ block: "nearest" }); // 방향키로 고른 항목이 항상 보이게
     }
     function pick(c, complete) {
       menu.classList.add("hidden");
@@ -492,7 +511,10 @@
       if (it) { ev.preventDefault(); pick(items[+it.dataset.i], false); }
     });
     const resizeInput = () => { input.style.height='auto'; input.style.height=Math.min(input.scrollHeight,180)+'px'; };
-    input.addEventListener("input", () => { active = 0; updateMenu(); resizeInput(); });
+    input.addEventListener("input", () => {
+      active = 0; updateMenu(); resizeInput();
+      if (input.value.startsWith("/")) syncOffice().then(() => { if (input.value.startsWith("/") && !/s/.test(input.value)) updateMenu(); });
+    });
     input.addEventListener("keydown", (ev) => {
       if (ev.isComposing || ev.keyCode === 229) return;
       if (ev.key === 'Enter' && ev.shiftKey) return;
@@ -524,6 +546,7 @@
     if (restored.length) addBot().innerHTML = '<div class="muted">이전 대화를 복원했어요. 실행 계획은 다시 요청해 주세요.</div>';
     saveState();
     resizeInput(); input.focus();
+    syncOffice(true);
   }
 
   // 헤더의 "현재 사이트" 상태 표시 (탭이 바뀔 때마다 갱신)
