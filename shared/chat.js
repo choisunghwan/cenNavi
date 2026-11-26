@@ -635,11 +635,56 @@
       return true;
     }
     input.addEventListener("input", () => { recallAt = -1; });
+
+    // 추천 문구: 입력창에 회색 글씨로 이어질 말을 보여주고, Tab(또는 끝에서 →)으로 받는다.
+    // 후보 순서: 내가 예전에 보낸 말(최근 것 먼저) → 자주 쓰는 문구 → 사이트 이동 문구
+    const PHRASES = manual
+      ? ["로그인 계정 알려줘", "개발 환경 목록 보여줘", "테스트 환경 목록 보여줘", "사용 방법 알려줘"]
+      : ["이 화면 요약해줘", "이 페이지 한국어로 번역해줘", "선택한 글 쉽게 설명해줘", "검색창이 어디야?",
+         "이 화면에서 뭘 할 수 있어?", "이전 화면으로 가줘", "새로고침 해줘",
+         ...(browserNav ? Object.keys(SITES).filter((k) => /[가-힣]/.test(k)).map((k) => `${k}로 이동해줘`) : [])];
+    const ghost = document.createElement("div");
+    ghost.className = "ghost"; ghost.setAttribute("aria-hidden", "true");
+    ghost.innerHTML = '<span class="ghost-typed"></span><span class="ghost-rest"></span><kbd class="ghost-key">Tab</kbd>';
+    input.before(ghost);
+    const basePlaceholder = input.placeholder;
+    let suggestion = "";
+    function suggest(v) {
+      if (v.startsWith("/") || v.includes("\n")) return "";
+      if (!v.trim()) return PHRASES[sent.length % PHRASES.length] || "";   // 빈 칸이면 보낼 때마다 바뀌는 추천 하나
+      const low = v.toLowerCase();
+      const pool = [...sent.slice().reverse(), ...PHRASES];
+      return pool.find((c) => c.length > v.length && c.toLowerCase().startsWith(low) && !c.includes("\n")) || "";
+    }
+    function updateGhost() {
+      const v = input.value;
+      const atEnd = input.selectionStart === v.length && input.selectionEnd === v.length;
+      suggestion = document.activeElement === input && !input.disabled && atEnd && recallAt < 0 ? suggest(v) : "";
+      ghost.hidden = !suggestion;
+      input.placeholder = suggestion && !v ? "" : basePlaceholder;
+      if (!suggestion) return;
+      Object.assign(ghost.style, { left: input.offsetLeft + "px", top: input.offsetTop + "px", width: input.clientWidth + "px" });
+      ghost.querySelector(".ghost-typed").textContent = v;
+      ghost.querySelector(".ghost-rest").textContent = v ? suggestion.slice(v.length) : suggestion;
+    }
+    function acceptGhost() {
+      if (!suggestion) return false;
+      input.value = suggestion; suggestion = "";
+      input.setSelectionRange(input.value.length, input.value.length);
+      resizeInput(); updateGhost();
+      return true;
+    }
+    ["input", "focus", "blur", "click", "keyup"].forEach((e) => input.addEventListener(e, updateGhost));
+    new MutationObserver(updateGhost).observe(input, { attributes: true, attributeFilter: ["disabled"] });
     input.addEventListener("keydown", (ev) => {
       if (ev.isComposing || ev.keyCode === 229) return;
       if (ev.key === 'Enter' && ev.shiftKey) return;
       const open = !menu.classList.contains("hidden") && items.length > 0;
       const page = 5;
+      if (!open && !ev.shiftKey && !ev.altKey && !ev.ctrlKey && !ev.metaKey && suggestion
+          && (ev.key === "Tab" || (ev.key === "ArrowRight" && input.value))) {
+        if (acceptGhost()) { ev.preventDefault(); return; }
+      }
       if (!open && !ev.shiftKey && !ev.altKey && !ev.ctrlKey && !ev.metaKey && (ev.key === "ArrowUp" || ev.key === "ArrowDown")) {
         if (recall(ev.key === "ArrowUp" ? -1 : 1)) { ev.preventDefault(); closeMenu(); }
         return;

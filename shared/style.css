@@ -108,6 +108,11 @@ summary { cursor:pointer; }
 #cmd { display:block; width:100%; min-height:66px; max-height:180px; margin:0; padding:2px 1px; resize:none; border:0; outline:none; background:transparent; color:var(--fg); font:13px/1.65 "Segoe UI","Malgun Gothic",system-ui,sans-serif; overflow-y:auto; }
 #cmd:focus-visible { outline:none; }
 #cmd::placeholder { color:var(--muted); }
+#form { position:relative; }
+.ghost { position:absolute; margin:0; padding:2px 1px; pointer-events:none; white-space:pre-wrap; overflow-wrap:break-word; font:13px/1.65 "Segoe UI","Malgun Gothic",system-ui,sans-serif; color:transparent; }
+.ghost[hidden] { display:none; }
+.ghost-rest { color:var(--muted); opacity:.75; }
+.ghost-key { margin-left:6px; padding:0 5px; border:1px solid var(--line); border-radius:4px; color:var(--muted); font:10px/1.5 system-ui,sans-serif; vertical-align:1px; }
 .composer-bottom { display:flex; align-items:center; gap:8px; }
 .composer-context { color:var(--muted); font-size:10px; margin-right:auto; }
 .send { display:grid; place-items:center; width:30px; height:30px; min-height:30px; padding:0; border-radius:50%; background:var(--fg); color:var(--bg); border:0; font-size:20px; line-height:1; }
