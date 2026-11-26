@@ -24,6 +24,7 @@ const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
     video:{answer:'검색할 내용을 확인해 주세요.',actions:[{type:'type',id:10,target:'고객명',text:'curry barker mama bear'},{type:'enter',id:10,target:'고객명'}],steps:[]},
     noPlan:{answer:'네이버 검색창에 입력한 후 검색하겠습니다.',actions:[],steps:[{id:10,target:'고객명'}]},
     wrongAction:{answer:'조회하겠습니다.',actions:[{type:'click',id:11,target:'AI 검색'}],steps:[]},
+    multi:{answer:'오늘의 날씨를 검색하겠습니다. 검색 결과에서 첫 번째 사이트에 접속하는 것은 현재 화면 정보만으로는 계획할 수 없습니다. 아래에서 확인 후 실행해 주세요.',actions:[{type:'type',id:10,target:'고객명',text:'오늘의 날씨',label:'고객명'},{type:'enter',id:10,target:'고객명'}],steps:[],remaining:'검색 결과에서 첫 번째 사이트 열기'},
    };
    const requestMode=mode;
    const text=JSON.stringify(outcomes[requestMode]||outcomes.summary),split=Math.min(20,text.length-1);
@@ -124,7 +125,17 @@ const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
   await page.click('[data-new]');mode='video';
   await ask('유튜브에서 curry barker mama bear 영상을 어떻게 보여줘?');
   assert.equal(await page.locator('[data-plan-run]:enabled').count(),0);
+  // A multi-screen request names its remaining step and checks the next screen automatically after a confirmed run.
+  await page.click('[data-new]');mode='multi';
+  await ask('오늘의 날씨 검색해주고 첫번째 사이트 접속해줘');
+  assert.deepEqual(await page.locator('.plan-steps .step-target').allInnerTexts(),['오늘의 날씨 입력','Enter로 실행']);
+  assert.doesNotMatch(await page.locator('.plan-summary').innerText(),/계획할 수 없/);
+  assert.match(await page.locator('.plan-next').innerText(),/검색 결과에서 첫 번째 사이트 열기/);
+  const beforeAuto=requests.length;mode='done';
+  await page.locator('[data-plan-run]:enabled').click();
+  await page.waitForFunction(()=>document.querySelectorAll('.task-history .history-step').length===1&&!document.querySelector('#cmd').disabled&&/조회 결과가 표시/.test(document.querySelector('#feed').innerText));
+  assert.equal(requests.length,beforeAuto+1);assert.match(requests.at(-1).contents.at(-1).parts[0].text,/원래 요청: 오늘의 날씨 검색해주고/);
   assert.deepEqual(errors,[]);
-  console.log('Workflow browser checks passed: partial streaming, truncated stream, stop/reload, navigation, same-tab continuation, fresh confirmation, blocked action.');
+  console.log('Workflow browser checks passed: partial streaming, truncated stream, stop/reload, navigation, same-tab continuation, automatic next step, fresh confirmation, blocked action.');
  } finally {await browser?.close();await new Promise(r=>server.close(r));}
 })().catch(e=>{console.error(e);process.exitCode=1;});

@@ -165,13 +165,15 @@
         if(!identified.ok){blocked.push({a,why:identified.why});continue;}
         const it=identified.item;
         const name = it.label || "(이름 없음)";
+        const own = (fallback) => a.label && norm(a.label) !== norm(name) ? a.label : fallback;   // 입력칸 안내 문구를 그대로 쓴 이름은 버린다
+        const where = it.kind === "field" ? `입력칸 · ${name}` : name;
         if (a.type === "type") {
           if (it.kind !== "field" || !TEXT_TYPES.includes(it.type)) blocked.push({ a, name, why: "입력할 수 없는 칸이에요 (비밀번호·파일 등은 직접 입력해 주세요)" });
           else if (!a.text || !norm(userText).includes(norm(a.text))) blocked.push({ a, name, why: "입력할 내용이 요청에 없어요" });
-          else steps.push({ a, target: name, desc: `"${a.text}" 입력`, short: a.label || `${a.text} 입력` });
+          else steps.push({ a, target: name, desc: `"${a.text}" 입력`, short: own(`${a.text} 입력`), where });
         } else if (a.type === "enter") {
           if (it.kind !== "field" || !TEXT_TYPES.includes(it.type)) blocked.push({ a, name, why: "Enter를 누를 수 없는 칸이에요" });
-          else steps.push({ a, target: name, desc: "Enter 키로 실행", short: a.label || "Enter로 실행" });
+          else steps.push({ a, target: name, desc: "Enter 키로 실행", short: own("Enter로 실행"), where: where + " · Enter 키" });
         } else if (a.type === "click") {
           const text = `${name} ${it.href || ""}`;
           if (DANGER.test(text)) blocked.push({ a, name, why: "삭제·결제·전송·로그아웃 같은 동작은 직접 눌러 주세요" });
@@ -179,7 +181,7 @@
           else {
             let dest = "";
             if (it.href) { try { dest = new URL(it.href, "http://x/").host; if (dest === "x") dest = ""; } catch { dest = ""; } }
-            steps.push({ a, target: name, desc: "클릭" + (dest ? ` → ${dest}` : ""), short: a.label || "클릭" });
+            steps.push({ a, target: name, desc: "클릭" + (dest ? ` → ${dest}` : ""), short: own(`${name.slice(0, 12)} 클릭`), where: where + " · 클릭" + (dest ? ` → ${dest}` : "") });
           }
         } else blocked.push({ a, name, why: "지원하지 않는 동작이에요" });
       }
@@ -192,18 +194,26 @@
     const REQUEST = /(해 ?줘|해 ?줄래|해 ?주세요|해 ?주라|해라|해봐|눌러 ?(줘|주세요)|입력해|검색해|들어가 ?(줘|주세요)|열어 ?(줘|주세요)|클릭해|이동해|가 ?줘|넣어 ?(줘|주세요)|보여 ?(줘|줄래|주세요|주라)|찾아 ?(줘|줄래|주세요|주라))/;
     const wantsAction = (t) => REQUEST.test(t) && !HOWTO.test(t);
 
-    const plans = new Map(); let planSeq = 0;
+    const plans = new Map(); let planSeq = 0, autoNext = null;
+    async function continuePlan(next) {
+      const p = plans.get(+next.dataset.planNext);
+      if (!p || next.disabled || controller || actionBusy) return;
+      next.disabled = true;
+      archiveStep(p); p.card.querySelector('.task-state').textContent = '확인 중';
+      await execute(p.task, { continuation:true, expected:{tabId:p.context.tabId}, card:p.card });
+    }
     const retryRequests = new WeakMap();
-    function planHtml(answer, steps, url, shot, page, task) {
+    function planHtml(answer, steps, url, shot, page, task, remaining = "") {
       const id = ++planSeq;
-      plans.set(id, { actions: steps.map((s) => s.a), steps, url, task, context: { tabId: page.tabId, snapshot: page.snapshot } });
+      plans.set(id, { actions: steps.map((s) => s.a), steps, url, task, remaining, context: { tabId: page.tabId, snapshot: page.snapshot } });
       return `<div class="plan"><div class="plan-summary">${fmt(answer)}</div>
-        <ol class="plan-steps">${steps.map(s => `<li><span class="step-target">${esc(s.target)}</span><span class="step-desc">${esc(s.desc)}</span></li>`).join('')}</ol>
+        <ol class="plan-steps">${steps.map(s => `<li><span class="step-target">${esc(s.short)}</span><span class="step-desc">${esc(s.where || s.desc)}</span></li>`).join('')}</ol>
+        ${remaining ? `<div class="plan-next">다음 화면에서: ${esc(remaining)}</div>` : ""}
         <div class="plan-controls"><button type="button" class="primary" data-plan-run="${id}">실행</button><button type="button" class="text-button" data-plan-cancel="${id}">취소</button><span>확인 후 실행합니다</span></div>
         <div class="plan-result" role="status"></div></div>`;
     }
-    function showPlan(box, answer, steps, url, shot, page, task, taskContext) {
-      const html = planHtml(answer, steps, url, shot, page, task);
+    function showPlan(box, answer, steps, url, shot, page, task, taskContext, remaining = "") {
+      const html = planHtml(answer, steps, url, shot, page, task, remaining);
       let card = taskContext.card;
       if (!card) {
         box.innerHTML = `<section class="task-card" aria-label="작업 진행"><div class="task-heading"><span class="task-symbol" aria-hidden="true">↗</span><strong>작업 진행</strong><span class="task-state">확인 필요</span></div><div class="task-goal">${esc(task)}</div><details class="task-history" hidden><summary>실행 기록</summary><div class="task-history-list"></div></details><div class="task-current"></div></section>`;
@@ -217,7 +227,7 @@
       if (plan.archived) return;
       const history = plan.card.querySelector('.task-history'), list = history.querySelector('.task-history-list');
       const entry = document.createElement('div'); entry.className = 'history-step';
-      const title = document.createElement('strong'); title.textContent = plan.steps.map(s => s.target).join(' → ');
+      const title = document.createElement('strong'); title.textContent = plan.steps.map(s => s.short || s.target).join(' → ');
       const note = document.createElement('p'); note.textContent = (plan.results || []).map(r => r.note).join(' / ');
       entry.append(title, note); list.appendChild(entry); history.hidden = false;
       history.querySelector('summary').textContent = `이전 ${list.children.length}개 단계 보기`;
@@ -280,7 +290,9 @@
         if (act && res.actions && res.actions.length) {
           const vetted = vetActions(res.actions, page, q);
           if (vetted.steps.length && !vetted.blocked.length) {
-            showPlan(box, res.answer, vetted.steps, url, shot, page, q, taskContext);
+            // 남은 단계가 있으면 "할 수 없다"는 문장은 빼고, 이어서 한다고 알려준다
+            const summary = res.remaining ? res.answer.split(/(?<=[.!?。])\s+/).filter(x => !/(계획할|알)\s*수\s*없/.test(x)).join(" ") : res.answer;
+            showPlan(box, summary, vetted.steps, url, shot, page, q, taskContext, res.remaining);
             return;
           }
           // 직접 해야 하는 동작이 섞여 있으면 실행하지 않고, 해당 위치를 표시해서 안내한다
@@ -468,14 +480,7 @@
       const shotImg = ev.target.closest("img.shot");
       if (shotImg) { openLightbox(shotImg.src); return; }
       const next = ev.target.closest('[data-plan-next]');
-      if (next) {
-        const p = plans.get(+next.dataset.planNext);
-        if (!p || controller || actionBusy) return;
-        next.disabled = true;
-        archiveStep(p); p.card.querySelector('.task-state').textContent = '확인 중';
-        await execute(p.task, { continuation:true, expected:{tabId:p.context.tabId}, card:p.card });
-        return;
-      }
+      if (next) { await continuePlan(next); return; }
       const pr = ev.target.closest("[data-plan-run]");
       if (pr && act) {
         if (controller || actionBusy) return;
@@ -496,12 +501,15 @@
             `<button type="button" class="primary" data-plan-next="${pr.dataset.planRun}">결과 확인 · 다음 단계</button>` +
             `<details class="execution-details"><summary>실행 내역</summary>${results.map(r => `<p>${r.ok ? '' : '확인 필요: '}${esc(r.note)}</p>`).join('')}</details>`;
           remember('model', '실행 결과: ' + results.map(r => r.note).join(' / '));
+          // 남은 단계가 있고 실행이 확실히 끝났으면, 바뀐 화면을 자동으로 확인해 다음 계획을 보여준다 (실행은 다시 확인을 받는다)
+          if (!uncertain && p.remaining) { out.querySelector('p').textContent = `실행했어요. 바뀐 화면을 확인하고 이어서 "${p.remaining}"을(를) 준비할게요…`; autoNext = out.querySelector('[data-plan-next]'); }
         } catch (e) { out.textContent = "실행하지 못했어요: " + e.message; p.card.querySelector('.task-state').textContent = '실행 안 됨'; }
         voice?.complete(out); actionBusy = false; input.disabled = false; voice?.finish();
         stopButton.hidden=true;form.querySelector('[type=submit]').hidden=false;
         toolbar.querySelector('[data-new]').disabled = false;
         if (unhighlight) { try { await unhighlight({tabId:p.context.tabId}); } catch { /* 페이지가 이동한 경우 */ } }
         input.focus({ preventScroll: true });
+        if (autoNext) { const btn = autoNext; autoNext = null; setTimeout(() => continuePlan(btn), 700); }
         return;
       }
       const pc = ev.target.closest("[data-plan-cancel]");
