@@ -617,11 +617,33 @@
       updateMenu(); resizeInput();
       if (input.value.startsWith("/")) syncOffice().then(() => { if (input.value.startsWith("/") && !/\s/.test(input.value)) updateMenu(); });
     });
+    // 보낸 말 기록: 입력창 첫 줄에서 ↑ 누르면 이전에 보낸 말, ↓ 누르면 다음 말 (터미널처럼)
+    const sent = session.messages().filter((t) => t.role === "user").map((t) => t.text).slice(-50);
+    let recallAt = -1, draft = "";
+    function recall(dir) {
+      const at = input.selectionStart, v = input.value;
+      if (at !== input.selectionEnd) return false;
+      if (dir < 0 && (!sent.length || v.slice(0, at).includes("\n"))) return false;   // 첫 줄에서만
+      if (dir > 0 && (recallAt < 0 || v.slice(at).includes("\n"))) return false;     // 기록을 보는 중일 때 마지막 줄에서만
+      if (recallAt < 0) draft = v;
+      recallAt = dir < 0 ? (recallAt < 0 ? sent.length - 1 : Math.max(recallAt - 1, 0)) : recallAt + 1;
+      if (recallAt >= sent.length) { recallAt = -1; input.value = draft; }
+      else input.value = sent[recallAt];
+      resizeInput();
+      const end = dir < 0 ? 0 : input.value.length;          // ↑면 맨 앞, ↓면 맨 끝에 커서 (계속 누를 수 있게)
+      input.setSelectionRange(end, end);
+      return true;
+    }
+    input.addEventListener("input", () => { recallAt = -1; });
     input.addEventListener("keydown", (ev) => {
       if (ev.isComposing || ev.keyCode === 229) return;
       if (ev.key === 'Enter' && ev.shiftKey) return;
       const open = !menu.classList.contains("hidden") && items.length > 0;
       const page = 5;
+      if (!open && !ev.shiftKey && !ev.altKey && !ev.ctrlKey && !ev.metaKey && (ev.key === "ArrowUp" || ev.key === "ArrowDown")) {
+        if (recall(ev.key === "ArrowUp" ? -1 : 1)) { ev.preventDefault(); closeMenu(); }
+        return;
+      }
       if (open && ev.key === "ArrowDown") { ev.preventDefault(); setActive((active + 1) % items.length); }
       else if (open && ev.key === "ArrowUp") { ev.preventDefault(); setActive((active - 1 + items.length) % items.length); }
       else if (open && ev.key === "PageDown") { ev.preventDefault(); setActive(Math.min(active + page, items.length - 1)); }
@@ -638,6 +660,8 @@
       ev.preventDefault();
       if (controller || actionBusy) return;
       const v = input.value;
+      if (v.trim() && sent[sent.length - 1] !== v) { sent.push(v); if (sent.length > 50) sent.shift(); }
+      recallAt = -1;
       input.value = ""; resizeInput(); closeMenu();
       execute(v);
     });
