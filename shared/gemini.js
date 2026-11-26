@@ -195,6 +195,7 @@
 - "이전 화면", "이전 페이지로 가려면", "뒤로", "앞으로", "새로고침"처럼 **브라우저 자체의 이동**을 묻는 말은 browserAction으로 답한다 (back / forward / reload).
   · 이 경우 화면 안의 요소를 steps에 넣지 않는다. 특히 화면 안의 "이전 페이지", "다음 페이지", "이전", "다음" 버튼은 목록·슬라이드를 넘기는 버튼일 수 있으므로, 사용자가 목록이나 슬라이드를 넘기겠다고 분명히 말했을 때만 steps에 넣는다.
   · 답변에는 단축키도 알려준다 (뒤로 Alt+←, 앞으로 Alt+→, 새로고침 F5). 화면에 앱 자체의 "뒤로"·"목록으로" 버튼이 있고 사용자가 그것을 원하는 것이 분명할 때만 steps에 넣는다.
+  · "네이버로 이동", "구글 열어줘", "유튜브 가줘"처럼 **다른 사이트로 가자는 말**은 browserAction "open"으로 답하고 url에 그 사이트의 대표 주소(https://로 시작하는 전체 주소)를 넣는다. 확실히 아는 사이트만 넣고, 모르면 "none"으로 두고 주소를 알려 달라고 한다. answer는 "네이버로 이동할게요. 아래 버튼을 눌러 주세요."처럼 짧게 쓴다.
   · 브라우저 이동이 아니면 browserAction은 "none"이다.
 - 정보에 없는 내용은 지어내지 말고 "이 화면 정보만으로는 알 수 없어요"라고 말한다. 추측이면 추측이라고 밝힌다.
 - 비밀번호는 알려주지 않는다 (제공되지도 않는다).
@@ -209,6 +210,11 @@
   · 버튼의 pos는 화면 안 대략 위치(예: 상단좌)다. "(아이콘)"으로 시작하는 이름은 아이콘만 있는 버튼이다.
   · 순서가 있는 작업(입력 후 클릭 등)은 steps를 실제 순서대로 넣고, answer에도 "1. … 2. …"처럼 같은 번호로 한 줄씩 설명한다. 동작이 하나뿐이면 번호를 붙이지 않는다.
 - 형식: 짧은 문단과 필요한 경우 "- " 불릿. 마크다운 제목은 쓰지 않는다. **굵게**는 핵심에만 쓴다.`;
+
+  // http(s) 주소만 허용한다 (javascript:, file: 등은 버린다)
+  function webUrl(v) {
+    try { const u = new URL(String(v || "").trim()); return /^https?:$/.test(u.protocol) ? u.href : ""; } catch { return ""; }
+  }
 
   async function answer(question, page, env, shot, options = {}) {
     const payload = JSON.stringify({ 화면: page, 등록된_환경: env || null });
@@ -225,7 +231,8 @@
           type: "OBJECT",
           properties: {
             answer: { type: "STRING" },
-            browserAction: { type: "STRING", enum: ["none", "back", "forward", "reload"] },
+            browserAction: { type: "STRING", enum: ["none", "back", "forward", "reload", "open"] },
+            url: { type: "STRING" },
             actions: { type: "ARRAY", items: { type: "OBJECT", properties: {
               type: { type: "STRING", enum: ["type", "enter", "click"] }, id: { type: "INTEGER" },
               target: { type: "STRING" }, text: { type: "STRING" }, label: { type: "STRING" } }, required: ["type", "id", "target"] } },
@@ -239,11 +246,12 @@
       const r = JSON.parse(raw);
       if (!r || typeof r.answer !== 'string' || !r.answer.trim()) throw new Error('Invalid answer');
       const steps = (r.steps || []).filter((x) => Number.isInteger(x.id)).slice(0, 2).map(x=>({id:x.id,target:String(x.target||'').slice(0,160),label:String(x.label||'').slice(0,20)}));
-      const nav = ["back", "forward", "reload"].includes(r.browserAction) ? r.browserAction : "none";
+      const url = r.browserAction === "open" ? webUrl(r.url) : "";
+      const nav = ["back", "forward", "reload"].includes(r.browserAction) || url ? r.browserAction : "none";
       const actions = nav !== "none" ? [] : (r.actions || [])
         .filter((x) => ["type", "enter", "click"].includes(x.type) && Number.isInteger(x.id))
         .slice(0, 4).map((x) => ({ type: x.type, id: x.id, target:String(x.target||'').slice(0,160), text: String(x.text || "").slice(0, 100), label: String(x.label || "").slice(0, 20) }));
-      return { answer: String(r.answer || "").trim(), browserAction: nav, actions, steps,
+      return { answer: String(r.answer || "").trim(), browserAction: nav, url, actions, steps,
         highlights: nav === "none" ? steps.map((x) => x.id) : [], labels: nav === "none" ? steps.map((x) => String(x.label || "").slice(0, 20)) : [] };
     } catch {
       throw new Error('AI 응답 형식을 해석하지 못했어요. 다시 시도해 주세요.');

@@ -43,11 +43,30 @@
       const a = document.createElement('a'); a.href = url; a.download = 'CenNavi-대화.md'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
 
+    // 자주 가는 사이트 이름 → 주소. 이름이 없으면 도메인처럼 보일 때만 주소로 쓴다.
+    const SITES = { 네이버: "https://www.naver.com", naver: "https://www.naver.com", 구글: "https://www.google.com", google: "https://www.google.com",
+      다음: "https://www.daum.net", daum: "https://www.daum.net", 유튜브: "https://www.youtube.com", youtube: "https://www.youtube.com",
+      깃허브: "https://github.com", github: "https://github.com", 나무위키: "https://namu.wiki" };
+    function siteUrl(text) {
+      const t = String(text || "").trim().replace(/\s*(으로|로)?\s*(이동|가줘|가기|열어줘|열기)?[.!]*$/, "").trim();
+      if (!t) return "";
+      if (SITES[t.toLowerCase()]) return SITES[t.toLowerCase()];
+      try { const u = new URL(/^https?:\/\//i.test(t) ? t : "https://" + t); return u.hostname.includes(".") && !/\s/.test(t) ? u.href : ""; } catch { return ""; }
+    }
+    const hostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, ""); } catch { return u; } };
+
     // 명령 정의: name(한글) + alias(영문 등), arg가 있으면 인자를 받는 명령
     const COMMANDS = [
       { name: "요약", alias: ["summary"], icon: "✦", desc: "현재 페이지 핵심 요약", run: (box) => analyze(box, "이 페이지의 핵심 내용을 요약하고 주요 사실과 할 일을 정리해줘.", false, {readOnly:true}) },
       { name: "번역", alias: ["translate"], icon: "🌐", desc: "선택 영역 또는 페이지 한국어 번역", run: (box) => analyze(box, "선택한 내용이 있으면 선택 영역을, 없으면 페이지 본문을 한국어로 번역해줘.", false, {readOnly:true}) },
       { name: "선택", alias: ["selection"], icon: "⌁", arg: "[질문]", argOptional: true, desc: "페이지에서 선택한 글에 질문", run: (box, args) => analyze(box, args || "선택한 내용을 쉽게 설명해줘.", true, {readOnly:true}) },
+      ...(browserNav ? [{ name: "이동", alias: ["go", "open"], icon: "🧭", arg: "<사이트|주소>", desc: "다른 사이트로 바로 이동 (예: /이동 네이버, /이동 naver.com)",
+        run: async (box, args) => {
+          const url = siteUrl(args);
+          if (!url) { box.innerHTML = `<div class="bubble">어디로 갈지 알려 주세요. 예: <code>/이동 네이버</code>, <code>/이동 naver.com</code></div>`; return; }
+          try { await browserNav("open", url); box.innerHTML = `<div class="bubble">🌐 <b>${esc(hostOf(url))}</b>(으)로 이동했어요.</div>`; }
+          catch (e) { box.innerHTML = `<div class="bubble err">이동하지 못했어요: ${esc(e.message)}</div>`; }
+        } }] : []),
       { name: "허브", alias: ["hub", "cen"], icon: "🏢", arg: "[도구|설정]", argOptional: true, desc: "CEN HUB 연결 설정과 도구 목록 (도구는 /도구이름 으로 바로 실행)",
         run: (box, args) => typeof EnvOffice === "undefined" ? (box.innerHTML = "<div class=\"bubble\">CEN HUB 연결을 불러오지 못했어요.</div>") : EnvOffice.run(box, args, { getPage: manual ? null : getPage }) },
       { name: "허브설정", alias: ["hub-settings", "허브 설정"], icon: "🏢", desc: "CEN HUB 서버 주소·토큰 입력 (/허브 설정 과 같아요)",
@@ -129,6 +148,9 @@
     }
 
     const NAV_LABEL = { back: "⬅ 이전 화면으로 이동", forward: "➡ 앞 화면으로 이동", reload: "🔄 새로고침" };
+    const navButton = (action, url) => action === "open"
+      ? `<button type="button" class="go" data-nav="open" data-url="${esc(url)}">🌐 ${esc(hostOf(url))}(으)로 이동</button>`
+      : `<button type="button" class="go" data-nav="${action}">${NAV_LABEL[action]}</button>`;
     const hlLabels = new Map();   // 다시 표시할 때 쓸 단계 설명 (ids → labels)
 
     const norm = (t) => String(t || "").replace(/\s+/g, "").toLowerCase();
@@ -279,7 +301,7 @@
           try {const r=await highlight(ids,labels,page,targets);if(r?.shown){shown=r.ids||ids;hlLabels.set(shown.join(','),{labels:shown.map(id=>labels[ids.indexOf(id)]),targets:shown.map(id=>targets[ids.indexOf(id)]),page});}}catch{shown=[];}
         }
         box.innerHTML = `<div class="bubble answer">${fmt(res.answer)}</div>` + COPY_BUTTON +
-          (res.browserAction !== "none" && browserNav ? `<div class="hl-actions"><button type="button" class="go" data-nav="${res.browserAction}">${NAV_LABEL[res.browserAction]}</button><span class="muted">눌러야 이동해요</span></div>` : "") +
+          (res.browserAction !== "none" && browserNav ? `<div class="hl-actions">${navButton(res.browserAction, res.url)}<span class="muted">눌러야 이동해요</span></div>` : "") +
           (shown.length ? `<div class="hl-actions"><span class="muted">화면에 표시했어요</span>
             <button type="button" data-hl="${shown.join(",")}">다시 표시</button>
             <button type="button" data-hl-clear>표시 끄기</button></div>`
@@ -349,6 +371,13 @@
       aiCtx().projects.some((n) => squash(t).includes(squash(n)));
 
     async function natural(text) {
+      // "네이버로 이동", "구글 열어줘"처럼 잘 아는 사이트로 가자는 말은 AI 없이 바로 이동 버튼을 보여준다.
+      const go = browserNav && /^(.+?)\s*(으로|로)?\s*(이동|가줘|가자|가기|들어가줘|열어줘|열어|켜줘)/.exec(text.trim());
+      const goUrl = go && SITES[go[1].trim().toLowerCase()];
+      if (goUrl) {
+        addBot().innerHTML = `<div class="bubble answer">${esc(hostOf(goUrl))}(으)로 이동할게요. 아래 버튼을 눌러 주세요.</div><div class="hl-actions">${navButton("open", goUrl)}<span class="muted">눌러야 이동해요</span></div>`;
+        scroll(); return;
+      }
       if (!EnvGemini.getKey()) {
         addBot().innerHTML = '<div class="bubble">AI를 연결하면 이 화면에 대해 물어볼 수 있어요.<div><button type="button" data-open-settings>AI 연결 설정</button></div></div>';
         return;
@@ -486,7 +515,7 @@
         return;
       }
       const nb = ev.target.closest("[data-nav]");
-      if (nb && browserNav) { try { await browserNav(nb.dataset.nav); } catch { /* 이동할 기록이 없는 경우 */ } return; }
+      if (nb && browserNav) { try { await browserNav(nb.dataset.nav, nb.dataset.url); } catch { /* 이동할 기록이 없는 경우 */ } return; }
       const hb = ev.target.closest("[data-hl]");
       if (hb && highlight) { try { const saved=hlLabels.get(hb.dataset.hl); if (!saved) return; await highlight(hb.dataset.hl.split(",").map(Number), saved.labels, saved.page, saved.targets); } catch { /* 탭이 바뀐 경우 등 */ } return; }
       if (ev.target.closest("[data-hl-clear]") && unhighlight) { try { await unhighlight(); } catch { /* 무시 */ } return; }

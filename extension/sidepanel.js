@@ -88,8 +88,9 @@ const diagnose = async () => {
 };
 
 // 브라우저 이동: 사용자가 답변 안의 버튼을 눌렀을 때만 실행된다
-const browserNav = async (action) => {
+const browserNav = async (action, url) => {
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  if (action === "open") { if (/^https?:\/\//i.test(url || "")) await chrome.tabs.update(tab.id, { url }); return; }
   if (action === "back") await chrome.tabs.goBack(tab.id);
   else if (action === "forward") await chrome.tabs.goForward(tab.id);
   else if (action === "reload") await chrome.tabs.reload(tab.id);
