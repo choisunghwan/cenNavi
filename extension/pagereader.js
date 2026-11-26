@@ -203,14 +203,32 @@ function performActions(actions, snapshot, token) {
           el.focus({preventScroll:true});
           if(control.cancelled||!state.resolve(a.id,a.target).ok){results.push({ok:false,note:'대상이 바뀌었거나 실행을 중지했어요.'});break;}
           if (a.type === "type") {
+            // 사람이 치듯 한 글자씩 입력한다(전체 1.6초 이내). 동작 줄이기 설정이면 한 번에 입력한다.
+            const text = String(a.text || ""), chars = Array.from(text);
+            const reduced = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+            const step = reduced || !chars.length ? 0 : Math.min(70, Math.max(12, 1600 / chars.length));
+            let typedAll = true;
             if (isInput || isArea) {
               const proto = isArea ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-              Object.getOwnPropertyDescriptor(proto, "value").set.call(el, String(a.text || ""));   // React 등 제어 입력 대응
-              el.dispatchEvent(new Event("input", { bubbles: true }));
+              const setValue = (v) => { Object.getOwnPropertyDescriptor(proto, "value").set.call(el, v); el.dispatchEvent(new Event("input", { bubbles: true })); };   // React 등 제어 입력 대응
+              if (!step) setValue(text);
+              else {
+                setValue("");
+                for (let i = 0; i < chars.length; i++) {
+                  if (control.cancelled || !el.isConnected) { typedAll = false; break; }
+                  setValue(chars.slice(0, i + 1).join("")); await sleep(step);
+                }
+              }
               el.dispatchEvent(new Event("change", { bubbles: true }));
+            } else if (!step) {
+              document.execCommand("insertText", false, text);
             } else {
-              document.execCommand("insertText", false, String(a.text || ""));
+              for (const ch of chars) {
+                if (control.cancelled || !el.isConnected) { typedAll = false; break; }
+                document.execCommand("insertText", false, ch); await sleep(step);
+              }
             }
+            if (!typedAll) { results.push({ ok: false, note: "입력 도중 중지했어요. 칸에 일부만 입력됐을 수 있어요." }); break; }
             results.push({ ok: true, note: `"${a.text}" 입력했어요` });
           } else {
             const opts = { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true };

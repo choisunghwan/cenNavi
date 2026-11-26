@@ -104,7 +104,7 @@ const act = async (actions, url, context = {}) => {
   const cancelled=new Promise(resolve=>{cancel=()=>resolve([{ok:false,note:'실행을 중지했어요.'}]);});
   const task={token:'cennavi-'+Date.now()+'-'+Math.random(),cancelled:false,cancel(){task.cancelled=true;cancel();}};
   activeActionRun=task;
-  const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve([{ ok: false, note: "시간이 초과되어 완료 여부를 확인하지 못했어요. 화면을 확인해 주세요." }]), 8000); });
+  const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve([{ ok: false, note: "시간이 초과되어 완료 여부를 확인하지 못했어요. 화면을 확인해 주세요." }]), 14000); });
   try {
   // The cancellable run exists before the first asynchronous browser call.
   const initial=await Promise.race([

@@ -55,9 +55,15 @@ function startControlOverlay(snapshot, token) {
       shadow.querySelector('.control-status span').textContent=(action.target?String(action.target).slice(0,50)+' · ':'')+verb+' 중 · Esc로 중지';
       cursor.querySelector('span').textContent='CenNavi · '+verb;
       Object.assign(targetBox.style,{left:(rect.left-4)+'px',top:(rect.top-4)+'px',width:(rect.width+8)+'px',height:(rect.height+8)+'px'});
-      const from=`translate3d(${position.x-3}px,${position.y-2}px,0)`,to=`translate3d(${x-3}px,${y-2}px,0)`;
+      // 사람 손처럼 살짝 휘어지는 곡선(2차 베지어)으로 이동한다. 거리에 따라 휘는 정도와 시간을 조절한다.
+      const at=(px,py)=>`translate3d(${px-3}px,${py-2}px,0)`,to=at(x,y);
+      const dx=x-position.x,dy=y-position.y,dist=Math.hypot(dx,dy)||1;
+      const bend=Math.min(160,dist*0.22)*(dx>=0?1:-1);
+      const cx=(position.x+x)/2-dy/dist*bend,cy=(position.y+y)/2+dx/dist*bend;
+      const frames=[];
+      for(let i=0;i<=24;i++){const t=i/24,u=1-t;frames.push({transform:at(u*u*position.x+2*u*t*cx+t*t*x,u*u*position.y+2*u*t*cy+t*t*y)});}
       root.dataset.phase='moving';cursor.style.transform=to;
-      animation=cursor.animate([{transform:from},{transform:to}],{duration:reduced?0:680,easing:'cubic-bezier(.2,.7,.3,1)'});
+      animation=cursor.animate(frames,{duration:reduced?0:Math.min(950,420+dist*0.45),easing:'cubic-bezier(.3,.1,.25,1)'});
       await animation.finished.catch(()=>{});position={x,y};root.dataset.phase='pointing';
     },
     async press(found){
@@ -69,7 +75,7 @@ function startControlOverlay(snapshot, token) {
   };
   window.__cenNaviControl=control;shadow.querySelector('button').onclick=cancel;addEventListener('keydown',key,true);
   observer=new MutationObserver(()=>{if(!root.isConnected)cancel();});observer.observe(document,{childList:true,subtree:true});
-  timer=setTimeout(cancel,9000);return {ok:true};
+  timer=setTimeout(cancel,15000);return {ok:true};
 }
 
 function stopControlOverlay(token) {
