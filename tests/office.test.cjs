@@ -22,7 +22,7 @@ test('서버 주소는 http(s) 출처만 받는다', () => {
   assert.equal(o.normalizeServer('아무거나'), '');
 });
 
-test('OFFICE 에는 사이트 도메인만 알린다', () => {
+test('CEN HUB 에는 사이트 도메인만 알린다', () => {
   const o = load(async () => res(200, {}));
   assert.equal(o.hostOf('https://forum.example.com/a/b?token=secret#x'), 'forum.example.com');
   assert.equal(o.hostOf('chrome://extensions'), '');

@@ -4,6 +4,17 @@
 
   function mount({ getUrl, getPage, getShot, highlight, unhighlight, browserNav, act, cancelAct, diagnose, manual = false }) {
     const feed = $("feed"), input = $("cmd"), menu = $("slashMenu"), form = $("form");
+    const voice = typeof EnvSpeech !== 'undefined' ? EnvSpeech.mount({input, form, feed, onCommand: voiceCommand}) : null;
+    function voiceCommand(command) {
+      if (controller || actionBusy) return '처리 중이에요. 잠시 기다려 주세요.';
+      const latest = feed.lastElementChild;
+      const selector = {confirm:'[data-plan-run]',cancelPlan:'[data-plan-cancel]',next:'[data-plan-next]'}[command];
+      if (!selector || !latest) return '지금 확인할 작업이 없어요.';
+      const buttons = [...latest.querySelectorAll(selector)].filter(b=>!b.disabled && b.getClientRects().length);
+      if (buttons.length !== 1) return '지금 확인할 작업이 없어요. 실행 계획을 먼저 요청해 주세요.';
+      buttons[0].click();
+      return command === 'confirm' ? '확인한 계획을 실행합니다.' : command === 'next' ? '실행 결과를 확인합니다.' : '실행 계획을 취소했어요.';
+    }
     const chips = document.createElement('div'); chips.id = 'chips'; chips.className = 'suggestions';
 
     const session = EnvConversation.create(manual ? 'screenGuide.web.v1' : 'screenGuide.panel.v1');
@@ -24,8 +35,8 @@
     utility.addEventListener('close', () => toggle.focus());
     const saveState = () => { tools.querySelector('.save-state').textContent = session.saved() ? '대화는 이 기기에 저장됩니다' : '기록 저장 공간이 부족해요'; };
     const remember = (role, text) => { session.append(role, text); saveState(); };
-    stopButton.onclick = () => { controller?.abort(); if(actionBusy) cancelAct?.(); };
-    toolbar.querySelector('[data-new]').onclick = () => { if (controller || actionBusy) return; session.clear(); plans.clear(); hlLabels.clear(); feed.replaceChildren(); greet(); saveState(); };
+    stopButton.onclick = () => { voice?.cancel(); controller?.abort(); if(actionBusy) cancelAct?.(); };
+    toolbar.querySelector('[data-new]').onclick = () => { if (controller || actionBusy) return; voice?.cancel(); session.clear(); plans.clear(); hlLabels.clear(); feed.replaceChildren(); greet(); saveState(); };
     function exportConversation() {
       const text = session.messages().map(x => `### ${x.role === 'user' ? '나' : 'CenNavi'}\n\n${x.text}`).join('\n\n');
       const url = URL.createObjectURL(new Blob([text], {type:'text/markdown;charset=utf-8'}));
@@ -37,8 +48,10 @@
       { name: "요약", alias: ["summary"], icon: "✦", desc: "현재 페이지 핵심 요약", run: (box) => analyze(box, "이 페이지의 핵심 내용을 요약하고 주요 사실과 할 일을 정리해줘.", false, {readOnly:true}) },
       { name: "번역", alias: ["translate"], icon: "🌐", desc: "선택 영역 또는 페이지 한국어 번역", run: (box) => analyze(box, "선택한 내용이 있으면 선택 영역을, 없으면 페이지 본문을 한국어로 번역해줘.", false, {readOnly:true}) },
       { name: "선택", alias: ["selection"], icon: "⌁", arg: "[질문]", argOptional: true, desc: "페이지에서 선택한 글에 질문", run: (box, args) => analyze(box, args || "선택한 내용을 쉽게 설명해줘.", true, {readOnly:true}) },
-      { name: "오피스", alias: ["office"], icon: "🏢", arg: "[도구|설정]", argOptional: true, desc: "OFFICE 연결 설정과 도구 목록 (도구는 /도구이름 으로 바로 실행)",
-        run: (box, args) => typeof EnvOffice === "undefined" ? (box.innerHTML = "<div class=\"bubble\">OFFICE 연결을 불러오지 못했어요.</div>") : EnvOffice.run(box, args, { getPage: manual ? null : getPage }) },
+      { name: "허브", alias: ["hub", "cen"], icon: "🏢", arg: "[도구|설정]", argOptional: true, desc: "CEN HUB 연결 설정과 도구 목록 (도구는 /도구이름 으로 바로 실행)",
+        run: (box, args) => typeof EnvOffice === "undefined" ? (box.innerHTML = "<div class=\"bubble\">CEN HUB 연결을 불러오지 못했어요.</div>") : EnvOffice.run(box, args, { getPage: manual ? null : getPage }) },
+      { name: "허브설정", alias: ["hub-settings", "허브 설정"], icon: "🏢", desc: "CEN HUB 서버 주소·토큰 입력 (/허브 설정 과 같아요)",
+        run: (box) => typeof EnvOffice === "undefined" ? (box.innerHTML = "<div class=\"bubble\">CEN HUB 연결을 불러오지 못했어요.</div>") : EnvOffice.run(box, "설정", { getPage: manual ? null : getPage }) },
       { name: "로그인", alias: ["login"], icon: "🔑", arg: "[주소]", argOptional: true,
         desc: manual ? "주소(또는 키워드)로 로그인 계정 보기" : "현재 사이트의 로그인 계정 보기 · 주소 지정 가능",
         run: async (box, args) => {
@@ -65,10 +78,10 @@
       { name: "설정", alias: ["settings", "키"], icon: "⚙️", desc: "Gemini 키·모델 설정 (자연어 입력용)",
         run: (box) => { box.innerHTML = settingsHtml(); } },
       { name: "지우기", alias: ["clear"], icon: "🧹", desc: "대화 내용 지우기",
-        run: () => { session.clear(); plans.clear(); hlLabels.clear(); feed.innerHTML = ""; greet(); saveState(); }, silent: true },
+        run: () => { voice?.cancel(); session.clear(); plans.clear(); hlLabels.clear(); feed.innerHTML = ""; greet(); saveState(); }, silent: true },
     ];
 
-    // OFFICE 의 승인된 도구를 슬래시 명령으로 올린다(/cen-log-analyzer 처럼). 연결 설정이 있을 때만, 1분에 한 번만 목록을 새로 가져온다.
+    // CEN HUB 의 승인된 도구를 슬래시 명령으로 올린다(/cen-log-analyzer 처럼). 연결 설정이 있을 때만, 1분에 한 번만 목록을 새로 가져온다.
     // 명령 뒤의 글은 줄바꿈을 지키려고 raw 로 넘긴다(스택 트레이스가 한 줄로 뭉개지면 안 된다).
     let officeCmds = [], officeAt = 0;
     async function syncOffice(force = false) {
@@ -76,13 +89,15 @@
       officeAt = Date.now();
       const list = await EnvOffice.loadTools();
       for (const c of officeCmds) { const i = COMMANDS.indexOf(c); if (i >= 0) COMMANDS.splice(i, 1); }
+      // 서버가 한글 이름(title 등)을 주면 그걸 명령 이름으로 쓰고(띄어쓰기는 뺀다) 영문 이름은 별칭으로 남긴다.
+      const koName = (t) => String(t.title || t.displayName || t.label || t.nameKo || "").replace(/\s+/g, "");
       officeCmds = list.filter((t) => !COMMANDS.some((c) => c.name === t.name || c.alias.includes(t.name))).map((t) => ({
-        name: t.name, alias: [], icon: "🏢", arg: "[글]", argOptional: true, raw: true, desc: "OFFICE · " + (t.description || "승인된 도구"),
+        name: koName(t) || t.name, alias: koName(t) ? [t.name] : [], icon: "🏢", arg: "[글]", argOptional: true, raw: true, desc: "CEN HUB · " + (t.description || "승인된 도구"),
         run: (box, args) => EnvOffice.runTool(box, t.name, getPage, { text: args }) }));
       COMMANDS.push(...officeCmds);
     }
 
-    tools.innerHTML = '<div class="menu-label">페이지 도구</div>' + ['요약', '선택', '번역', '오피스'].map(name => `<button type="button" data-cmd="${name}">${name}<span>↗</span></button>`).join('') +
+    tools.innerHTML = '<div class="menu-label">페이지 도구</div>' + ['요약', '선택', '번역', '허브', '허브설정'].map(name => `<button type="button" data-cmd="${name}">${name}<span>↗</span></button>`).join('') +
       '<div class="menu-label">환경과 설정</div>' + ['로그인', '환경', '설정', '진단', '도움말'].map(name => `<button type="button" data-cmd="${name}">${name}</button>`).join('') +
       '<button type="button" data-export>대화 내보내기</button><div class="save-state"></div>';
     tools.querySelector('[data-export]').onclick = () => { closeTools(); exportConversation(); };
@@ -152,7 +167,7 @@
     // 모델이 실수로 실행 계획을 내더라도, 사용자가 "대신 해 달라"고 한 경우에만 계획을 허용한다.
     // ("어떻게 해", "어디서 해"처럼 방법을 묻는 말은 안내만 한다)
     const HOWTO = /어떻게|어디서|어디로|어디에|어디야|방법|하려면|하는 ?법|알려|가르쳐|뭐야|뭔가요|궁금/;
-    const REQUEST = /(해 ?줘|해 ?줄래|해 ?주세요|해 ?주라|해라|해봐|눌러 ?(줘|주세요)|입력해|검색해|들어가 ?(줘|주세요)|열어 ?(줘|주세요)|클릭해|이동해|가 ?줘|넣어 ?(줘|주세요))/;
+    const REQUEST = /(해 ?줘|해 ?줄래|해 ?주세요|해 ?주라|해라|해봐|눌러 ?(줘|주세요)|입력해|검색해|들어가 ?(줘|주세요)|열어 ?(줘|주세요)|클릭해|이동해|가 ?줘|넣어 ?(줘|주세요)|보여 ?(줘|줄래|주세요|주라)|찾아 ?(줘|줄래|주세요|주라))/;
     const wantsAction = (t) => REQUEST.test(t) && !HOWTO.test(t);
 
     const plans = new Map(); let planSeq = 0;
@@ -250,6 +265,10 @@
           box.innerHTML = `<div class="bubble err">대상을 확인할 수 없거나 <b>직접 해야 하는 동작</b>이 있어 실행하지 않아요.<ul class="why">${
             vetted.blocked.map((b) => `<li>${b.name ? "<b>" + esc(b.name) + "</b> — " : ""}${esc(b.why)}</li>`).join("")}</ul></div>`;
           return;
+        }
+        if (act && !taskContext.readOnly && !taskContext.card && wantsAction(q) && (!res.browserAction || res.browserAction === 'none')) {
+          res.answer = '요청은 이해했지만, 확인 가능한 실행 계획을 만들지 못했어요. 아직 입력·검색·이동은 하지 않았어요. 검색할 사이트나 입력칸이 보이는 화면에서 다시 요청해 주세요.';
+          res.steps = [];
         }
         res.answer = soften(res.answer);
         // 안내한 항목을 화면에서 표시 (실패해도 답변은 그대로 보여준다)
@@ -358,6 +377,8 @@
       const t = text.trim();
       if (!t) return;
       if (controller || actionBusy) return;
+      voice?.prepare();
+      const previousBot = feed.lastElementChild;
       requestHistory = session.messages();
       controller = new AbortController();
       stopButton.hidden = false;
@@ -378,8 +399,9 @@
       await dispatch(cmd, cmd.raw ? t.slice(1 + word.length).trim() : rest.join(" "), utilityRequest);
       } catch (e) { addBot().textContent = e.name === 'AbortError' ? '중지했어요.' : '요청 처리 실패: ' + e.message; }
       finally {
+        if (!controller.signal.aborted && !taskContext.utility) { const body = taskContext.retryBox || (taskContext.card ? taskContext.card.querySelector('.task-current') : feed.lastElementChild?.querySelector('.body')); if (body && (taskContext.card || taskContext.retryBox || feed.lastElementChild !== previousBot)) voice?.complete(body); }
         controller = null; stopButton.hidden = true; toolbar.querySelector('[data-new]').disabled = false;
-        send.disabled = false; send.hidden = false; input.disabled = false; if (!utility.open) input.focus({preventScroll:true});
+        send.disabled = false; send.hidden = false; input.disabled = false; voice?.finish(); if (!utility.open) input.focus({preventScroll:true});
       }
     }
 
@@ -430,7 +452,7 @@
         if (controller || actionBusy) return;
         const card = pr.closest(".plan"), out = card.querySelector(".plan-result"), p = plans.get(+pr.dataset.planRun);
         if (!p) return;
-        actionBusy = true; input.disabled = true;
+        voice?.prepare(); actionBusy = true; input.disabled = true;
         stopButton.hidden=false;form.querySelector('[type=submit]').hidden=true;
         toolbar.querySelector('[data-new]').disabled = true;
         p.card.querySelector('.task-state').textContent = '실행 중';
@@ -446,7 +468,7 @@
             `<details class="execution-details"><summary>실행 내역</summary>${results.map(r => `<p>${r.ok ? '' : '확인 필요: '}${esc(r.note)}</p>`).join('')}</details>`;
           remember('model', '실행 결과: ' + results.map(r => r.note).join(' / '));
         } catch (e) { out.textContent = "실행하지 못했어요: " + e.message; p.card.querySelector('.task-state').textContent = '실행 안 됨'; }
-        actionBusy = false; input.disabled = false;
+        voice?.complete(out); actionBusy = false; input.disabled = false; voice?.finish();
         stopButton.hidden=true;form.querySelector('[type=submit]').hidden=false;
         toolbar.querySelector('[data-new]').disabled = false;
         if (unhighlight) { try { await unhighlight({tabId:p.context.tabId}); } catch { /* 페이지가 이동한 경우 */ } }
@@ -544,6 +566,7 @@
       else addBot().innerHTML = `<div class="bubble answer">${fmt(turn.text)}</div>` + COPY_BUTTON;
     }
     if (restored.length) addBot().innerHTML = '<div class="muted">이전 대화를 복원했어요. 실행 계획은 다시 요청해 주세요.</div>';
+    feed.querySelectorAll('.msg.bot .body').forEach(body => voice?.complete(body, false));
     saveState();
     resizeInput(); input.focus();
     syncOffice(true);

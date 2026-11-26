@@ -25,6 +25,11 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await page.evaluate(()=>{const cover=document.createElement('div');cover.id='cover';const r=document.querySelector('#search').getBoundingClientRect();cover.style.cssText=`position:fixed;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;z-index:99;background:white`;document.body.appendChild(cover);});
   assert.equal(await page.evaluate(s=>showVerifiedTargets([s.id],[],s.snapshot,['조회']).shown,state),0);
   await page.evaluate(()=>document.querySelector('#cover').remove());
+  state=await snapshot();
+  await page.evaluate(s=>startControlOverlay(s.snapshot,'appearance'),state);
+  assert.equal(await page.evaluate(()=>document.querySelector('#__cennavi_control').shadowRoot.querySelector('.control-cursor').hidden),false);
+  assert.ok(await page.evaluate(()=>document.querySelector('#__cennavi_control').shadowRoot.querySelector('.control-cursor').getBoundingClientRect().left>20));
+  await page.evaluate(()=>stopControlOverlay('appearance'));
   const startHeld=async token=>{
    state=await snapshot();
    await page.evaluate(({state,token})=>{window.proceed=null;startControlOverlay(state.snapshot,token);const control=window.__cenNaviControl,move=control.moveTo;control.moveTo=async target=>{await move(target);await new Promise(resolve=>window.proceed=resolve);};},{state,token});

@@ -21,6 +21,8 @@ const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
     wrongTarget:{answer:'조회 버튼을 누르세요.',actions:[],steps:[{id:11,target:'주문 조회'}]},
     guided:{answer:'**조회** 버튼을 누르세요.',actions:[],steps:[{id:11,target:'조회',label:'조회'}]},
     guessed:{answer:'**조회** 버튼을 누르세요.',actions:[],steps:[]},
+    video:{answer:'검색할 내용을 확인해 주세요.',actions:[{type:'type',id:10,target:'고객명',text:'curry barker mama bear'},{type:'enter',id:10,target:'고객명'}],steps:[]},
+    noPlan:{answer:'네이버 검색창에 입력한 후 검색하겠습니다.',actions:[],steps:[{id:10,target:'고객명'}]},
     wrongAction:{answer:'조회하겠습니다.',actions:[{type:'click',id:11,target:'AI 검색'}],steps:[]},
    };
    const requestMode=mode;
@@ -109,6 +111,19 @@ const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
   await tool('요약');await page.waitForFunction(()=>!document.querySelector('#cmd').disabled);assert.equal(await page.evaluate(()=>testHighlights),0);
   await ask('조회 버튼은 어디야?');assert.equal(await page.evaluate(()=>testHighlights),1);
   mode='wrongAction';await ask('조회 버튼 눌러줘');assert.equal(await page.locator('[data-plan-run]:enabled').count(),0);
+  await page.click('[data-new]');mode='video';
+  const executed=await page.evaluate(()=>testActions);
+  await ask('유튜브에서 curry barker mama bear 영상 보여줘');
+  assert.equal(await page.locator('[data-plan-run]:enabled').count(),1);
+  assert.equal(await page.evaluate(()=>testActions),executed);
+  await page.click('[data-new]');mode='noPlan';
+  await ask('유튜브에서 curry barker mama bear 영상 보여줘');
+  assert.equal(await page.locator('[data-plan-run]:enabled').count(),0);
+  assert.doesNotMatch(await page.locator('#feed').innerText(),/검색하겠습니다/);
+  assert.match(await page.locator('#feed').innerText(),/실행 계획을 만들지 못했어요/);
+  await page.click('[data-new]');mode='video';
+  await ask('유튜브에서 curry barker mama bear 영상을 어떻게 보여줘?');
+  assert.equal(await page.locator('[data-plan-run]:enabled').count(),0);
   assert.deepEqual(errors,[]);
   console.log('Workflow browser checks passed: partial streaming, truncated stream, stop/reload, navigation, same-tab continuation, fresh confirmation, blocked action.');
  } finally {await browser?.close();await new Promise(r=>server.close(r));}

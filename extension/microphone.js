@@ -1,0 +1,1 @@
+document.getElementById('allow').onclick=async()=>{const out=document.getElementById('result');try{const stream=await navigator.mediaDevices.getUserMedia({audio:true});stream.getTracks().forEach(track=>track.stop());out.textContent='마이크 권한을 확인했어요. 이 탭을 닫고 패널로 돌아가 주세요.';}catch{out.textContent='마이크를 사용할 수 없어요. 브라우저와 Windows의 마이크 권한, 조직 정책을 확인해 주세요.';}};

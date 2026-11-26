@@ -186,7 +186,7 @@ function performActions(actions, snapshot, token) {
       try {
         if(a.type==='click'&&(DANGER.test(labelOf(el))||(el.form&&el.form.querySelector('input[type=password]')&&/submit/i.test(el.type||'')))){results.push({ok:false,note:'안전을 위해 직접 눌러야 하는 항목이에요.'});break;}
         if((a.type==='type'||a.type==='enter')&&((el.type||'').toLowerCase()==='password'||(a.type==='enter'&&el.form?.querySelector('input[type=password]')))){results.push({ok:false,note:'비밀번호가 있는 로그인은 직접 해 주세요.'});break;}
-        await control.moveTo(found);
+        await control.moveTo(found,a);
         if(control.cancelled){results.push({ok:false,note:'실행을 중지했어요.'});break;}
         let current=state.resolve(a.id,a.target);
         if(!current.ok||Math.abs(current.x-found.x)>4||Math.abs(current.y-found.y)>4){results.push({ok:false,note:'조작 중 대상 위치가 바뀌어 중지했어요. 다시 확인해 주세요.'});break;}
