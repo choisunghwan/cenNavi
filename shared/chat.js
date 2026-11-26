@@ -504,58 +504,112 @@
       if (b) execute(b.dataset.run, {utility:utility.contains(b)});
     });
 
-    // 슬래시 자동완성
+    // 슬래시 자동완성 — 기본 명령과 CEN HUB 도구를 묶음으로 나누고, 목록만 스크롤한다.
     let items = [], active = 0;
+    const isHub = (c) => officeCmds.includes(c);
+    function rank(c, q) {
+      if (!q) return 0;
+      const names = [c.name.toLowerCase(), ...c.alias.map((a) => a.toLowerCase())];
+      if (names.some((n) => n === q)) return 0;
+      if (names.some((n) => n.startsWith(q))) return 1;
+      if (names.some((n) => n.includes(q))) return 2;
+      if (String(c.desc || "").toLowerCase().includes(q)) return 3;
+      return -1;
+    }
+    const mark = (text, q) => {
+      const t = String(text), i = q ? t.toLowerCase().indexOf(q) : -1;
+      return i < 0 ? esc(t) : esc(t.slice(0, i)) + "<b>" + esc(t.slice(i, i + q.length)) + "</b>" + esc(t.slice(i + q.length));
+    };
+    function setActive(i) {
+      const rows = menu.querySelectorAll(".slash-item");
+      rows[active]?.classList.remove("active");
+      active = i;
+      rows[active]?.classList.add("active");
+      rows[active]?.scrollIntoView({ block: "nearest" }); // 방향키로 고른 항목이 항상 보이게
+      input.setAttribute("aria-activedescendant", rows[active]?.id || "");
+    }
+    function closeMenu() { menu.classList.add("hidden"); input.setAttribute("aria-expanded", "false"); }
     function updateMenu() {
       const v = input.value;
-      if (!v.startsWith("/") || /\s/.test(v)) { menu.classList.add("hidden"); items = []; return; }
+      if (!v.startsWith("/") || /\s/.test(v)) { closeMenu(); items = []; return; }
       const q = v.slice(1).toLowerCase();
-      items = COMMANDS.filter((c) => c.name.startsWith(q) || c.alias.some((a) => a.startsWith(q)));
-      if (!items.length) { menu.classList.add("hidden"); return; }
+      const scored = COMMANDS.map((c, i) => ({ c, i, r: rank(c, q) })).filter((x) => x.r >= 0);
+      // 기본 명령이 먼저, 그 안에서는 잘 맞는 순서(같으면 원래 순서)
+      scored.sort((a, b) => (isHub(a.c) - isHub(b.c)) || (a.r - b.r) || (a.i - b.i));
+      items = scored.map((x) => x.c);
+      if (!items.length) {
+        menu.innerHTML = `<div class="slash-empty">“/${esc(v.slice(1))}” 에 맞는 명령이 없어요</div>`;
+        menu.classList.remove("hidden"); return;
+      }
       active = Math.min(active, items.length - 1);
-      const keepTop = menu.scrollTop; // 다시 그려도 스크롤 위치를 유지한다
-      menu.innerHTML = items.map((c, i) => `
-        <div class="slash-item ${i === active ? "active" : ""}" data-i="${i}">
-          <span class="s-name">${c.icon} /${esc(c.name)}${c.arg ? " <i>" + esc(c.arg) + "</i>" : ""}</span>
+      let html = "", group = null;
+      items.forEach((c, i) => {
+        const g = isHub(c) ? "CEN HUB 도구" : "기본 명령";
+        if (g !== group) {
+          group = g;
+          const n = items.filter((x) => isHub(x) === isHub(c)).length;
+          html += `<div class="slash-group" role="presentation">${g}<span>${n}</span></div>`;
+        }
+        html += `<div class="slash-item ${i === active ? "active" : ""}" id="slash-${i}" role="option" data-i="${i}">
+          <span class="s-icon">${c.icon}</span>
+          <span class="s-name">/${mark(c.name, q)}${c.arg ? " <i>" + esc(c.arg) + "</i>" : ""}</span>
           <span class="s-desc">${esc(c.desc)}</span>
-        </div>`).join("");
+        </div>`;
+      });
+      const keepTop = menu.querySelector(".slash-list")?.scrollTop || 0; // 다시 그려도 스크롤 위치를 유지한다
+      menu.innerHTML = `<div class="slash-list" role="listbox">${html}</div>
+        <div class="slash-foot"><span>↑↓ 이동 · Tab 완성 · Enter 실행 · Esc 닫기</span><span>${items.length}개</span></div>`;
       menu.classList.remove("hidden");
-      menu.scrollTop = keepTop;
-      menu.querySelector(".slash-item.active")?.scrollIntoView({ block: "nearest" }); // 방향키로 고른 항목이 항상 보이게
+      input.setAttribute("aria-expanded", "true");
+      menu.querySelector(".slash-list").scrollTop = keepTop;
+      setActive(active);
     }
     function pick(c, complete) {
-      menu.classList.add("hidden");
+      closeMenu();
       if (c.arg && (complete || !c.argOptional)) { input.value = "/" + c.name + " "; input.focus(); }
       else { input.value = ""; execute("/" + c.name); }
     }
     menu.addEventListener("mousedown", (ev) => {
       const it = ev.target.closest("[data-i]");
-      if (it) { ev.preventDefault(); pick(items[+it.dataset.i], false); }
+      ev.preventDefault(); // 메뉴를 눌러도 입력창 포커스는 그대로
+      if (it) pick(items[+it.dataset.i], false);
     });
+    menu.addEventListener("mousemove", (ev) => {
+      const it = ev.target.closest("[data-i]");
+      if (it && +it.dataset.i !== active) {
+        const rows = menu.querySelectorAll(".slash-item");
+        rows[active]?.classList.remove("active"); active = +it.dataset.i; it.classList.add("active"); // 마우스로는 스크롤하지 않는다
+      }
+    });
+    input.setAttribute("role", "combobox"); input.setAttribute("aria-controls", "slashMenu"); input.setAttribute("aria-expanded", "false");
     const resizeInput = () => { input.style.height='auto'; input.style.height=Math.min(input.scrollHeight,180)+'px'; };
     input.addEventListener("input", () => {
-      active = 0; updateMenu(); resizeInput();
-      if (input.value.startsWith("/")) syncOffice().then(() => { if (input.value.startsWith("/") && !/s/.test(input.value)) updateMenu(); });
+      active = 0; const list = menu.querySelector(".slash-list"); if (list) list.scrollTop = 0; // 검색어가 바뀌면 맨 위부터
+      updateMenu(); resizeInput();
+      if (input.value.startsWith("/")) syncOffice().then(() => { if (input.value.startsWith("/") && !/\s/.test(input.value)) updateMenu(); });
     });
     input.addEventListener("keydown", (ev) => {
       if (ev.isComposing || ev.keyCode === 229) return;
       if (ev.key === 'Enter' && ev.shiftKey) return;
-      const open = !menu.classList.contains("hidden");
-      if (open && ev.key === "ArrowDown") { ev.preventDefault(); active = (active + 1) % items.length; updateMenu(); }
-      else if (open && ev.key === "ArrowUp") { ev.preventDefault(); active = (active - 1 + items.length) % items.length; updateMenu(); }
+      const open = !menu.classList.contains("hidden") && items.length > 0;
+      const page = 5;
+      if (open && ev.key === "ArrowDown") { ev.preventDefault(); setActive((active + 1) % items.length); }
+      else if (open && ev.key === "ArrowUp") { ev.preventDefault(); setActive((active - 1 + items.length) % items.length); }
+      else if (open && ev.key === "PageDown") { ev.preventDefault(); setActive(Math.min(active + page, items.length - 1)); }
+      else if (open && ev.key === "PageUp") { ev.preventDefault(); setActive(Math.max(active - page, 0)); }
       else if (open && (ev.key === "Tab" || ev.key === "Enter")) {
         // 이미 명령 전체를 입력했으면 그대로 실행, 아니면 선택 항목으로 완성
         const exact = items.find((c) => input.value.slice(1) === c.name || c.alias.includes(input.value.slice(1).toLowerCase()));
         if (ev.key === "Enter" && exact) { ev.preventDefault(); form.requestSubmit(); return; }
         ev.preventDefault(); pick(items[active], ev.key === "Tab");
-      } else if (open && ev.key === "Escape") menu.classList.add("hidden");
+      } else if (!menu.classList.contains("hidden") && ev.key === "Escape") closeMenu();
       if (ev.key === 'Enter' && !ev.defaultPrevented) { ev.preventDefault(); form.requestSubmit(); }
     });
     form.addEventListener("submit", (ev) => {
       ev.preventDefault();
       if (controller || actionBusy) return;
       const v = input.value;
-      input.value = ""; resizeInput(); menu.classList.add("hidden");
+      input.value = ""; resizeInput(); closeMenu();
       execute(v);
     });
 
