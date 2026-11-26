@@ -155,7 +155,7 @@ function extractPage() {
   };
 }
 
-// 안내한 항목 주위에 주황 테두리와 "여기예요" 표시를 띄운다. (클릭 등 조작은 하지 않는다)
+// 안내한 항목 주위에 파란 테두리와 "여기예요" 표시를 띄운다. (클릭 등 조작은 하지 않는다)
 function clearHighlight() {
   const o = document.getElementById("__guide_overlay");
   if (o && o.__stop) o.__stop();
